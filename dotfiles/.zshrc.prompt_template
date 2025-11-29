@@ -1,0 +1,107 @@
+# git ブランチを表示するための準備
+autoload -Uz vcs_info
+setopt prompt_subst
+zstyle ':vcs_info:git:*' check-for-changes true
+zstyle ':vcs_info:git:*' stagedstr "%F{yellow}!"
+zstyle ':vcs_info:git:*' unstagedstr "%F{red}+"
+zstyle ':vcs_info:*' formats "%F{green}%c%u[%b]%f"
+zstyle ':vcs_info:*' actionformats '[%b|%a]'
+precmd () { vcs_info }
+
+# ローカルホスト名
+LOCAL_HOST='LAPTOP-0Q4P8DSR'
+
+# tomos
+case $HOST in
+    LAPTOP-0Q4P8DSR)
+        HOST_COLOR=$CYAN
+        HOST_NAME='local host'
+        ;;
+    ip-10-1-15-51)
+        HOST_COLOR=$RED
+        HOST_NAME='tomos-preview'
+        ;;
+    ip-10-1-133-239)
+        HOST_COLOR=$RED
+        HOST_NAME='tomos-admin001'
+        ;;
+    ip-10-1-149-159)
+        HOST_COLOR=$RED
+        HOST_NAME='tomos-admin002'
+        ;;
+    ip-10-1-137-10)
+        HOST_COLOR=$RED
+        HOST_NAME='tomos-app001'
+        ;;
+    ip-10-1-152-201)
+        HOST_COLOR=$RED
+        HOST_NAME='tomos-app002'
+        ;;
+    ip-10-1-138-65)
+        HOST_COLOR=$RED
+        HOST_NAME='tomos-batch001'
+        ;;
+    ip-10-1-138-105)
+        HOST_COLOR=$RED
+        HOST_NAME='tomos-cache001'
+        ;;
+    ip-10-1-132-117)
+        HOST_COLOR=$RED
+        HOST_NAME='tomos-db001'
+        ;;
+    # ldnews
+    ip-10-202-101-48)
+        HOST_COLOR=$RED
+        HOST_NAME='toro-dev-bastion'
+        ;;
+    ip-10-201-3-126)
+        HOST_COLOR=$RED
+        HOST_NAME='toro-stg-bastion'
+        ;;
+    ip-10-201-5-250)
+        HOST_COLOR=$RED
+        HOST_NAME='toro-prod-bastion'
+        ;;
+    *)
+        HOST_COLOR=$RED
+        HOST_NAME=$HOST
+
+esac
+
+# command prompt
+precmd() {
+  vcs_info
+}
+
+git_user_info() {
+  if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+    local GIT_NAME=$(git config user.name 2>/dev/null)
+    local GIT_EMAIL=$(git config user.email 2>/dev/null)
+
+    export PROMPT_GIT_USER="${GIT_NAME} <${GIT_EMAIL}>"
+  else
+    export PROMPT_GIT_USER=""
+  fi
+}
+
+INSTANCE_INFO=$(grep -oE '/toro/ec2/[^/]+/[^/]+/[^/]+/i-[0-9a-f]+' /opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log | awk -F'/' '{print $4 "-" $5 " (" $7 ") "}' | tail -n 1)
+
+precmd_functions+=(git_user_info)
+
+if [ $UID -eq 0 ]; then
+  PROMPT_SYMBOL='#'
+else
+  PROMPT_SYMBOL='$'
+fi
+
+if [ -z "$INSTANCE_INFO" ]; then
+  PROMPT='${WHITE}< %D{%m}/%D{%d} %D{%H}:%D{%M}:%D{%S} > [${HOST_COLOR} ${USER} ${WHITE}|${HOST_COLOR} ${HOST_NAME} ${WHITE}] ${vcs_info_msg_0_} ${PROMPT_GIT_USER} ${GREEN}%d
+${WHITE}${PROMPT_SYMBOL}${CLEAR} '
+  if [ -n "$CONTAINER_NAME" ]; then
+    PROMPT='${WHITE}< %D{%m}/%D{%d} %D{%H}:%D{%M}:%D{%S} > [${HOST_COLOR} ${USER} ${WHITE}|${HOST_COLOR} ${CONTAINER_NAME} ${WHITE}] ${vcs_info_msg_0_} ${PROMPT_GIT_USER} ${GREEN}%d
+${WHITE}${PROMPT_SYMBOL}${CLEAR} '
+  fi
+else
+  PROMPT='${WHITE}< %D{%m}/%D{%d} %D{%H}:%D{%M}:%D{%S} > [${HOST_COLOR} ${USER} ${WHITE}|${HOST_COLOR} ${INSTANCE_INFO}${WHITE}] ${vcs_info_msg_0_} ${PROMPT_GIT_USER} ${GREEN}%d
+${WHITE}${PROMPT_SYMBOL}${CLEAR} '
+fi

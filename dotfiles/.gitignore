@@ -1,0 +1,5 @@
+.zshrc.prompt
+tmux-client-*
+resize-pane
+.zcompdump*
+nvim/lazy-lock.json
