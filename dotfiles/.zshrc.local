@@ -53,6 +53,7 @@ alias dp='docker ps'
 alias ds='docker stop'
 alias docker_images_sort_repository='docker images | tail -n +2 | sort -k1'
 alias docker_rm_none_images='docker rmi $(docker images -f "dangling=true" -q)'
+alias share_dotfiles='cp -r ~/moove/tak/* ~/taku-enginner/'
 
 case $HOST in
   tak.moove.bz)
@@ -63,6 +64,7 @@ case $HOST in
     alias ldnews_bastion_stg='aws ssm start-session --target $STG_BASTION_INSTID --profile ldnews-stg'
     alias ldnews_bastion_prod='aws ssm start-session --target $PROD_BASTION_INSTID --profile ldnews-prod'
     alias "ldc"='UID=$(id -u) GID=$(id -g) docker compose -f compose.yaml $(find . -name "*compose.devcontainer.yaml" | sed "s/^/-f /") -f all.compose.yaml -f all.docker-engine.compose.yaml'
+    cd "$HOME/work/toro_dev/"
     ;;
   LAPTOP-0Q4P8DSR)
     export PATH="$PATH:/mnt/c/Users/taku1/bin"
@@ -77,4 +79,3 @@ if ! command -v hw > /dev/null; then
   cd ${HOME}/local/tmp && git clone https://github.com/tkengo/highway.git && cd highway && ./tools/build.sh && mv hw ${HOME}/local/bin
 fi
 
-cd "$HOME/work/toro_dev/"
