@@ -36,7 +36,7 @@ require("lazy").setup({
     -- import your plugins
     { import = "plugins/autopairs" },
     { import = "plugins/autoread" },
-    { import = "plugins/auto-save" },
+    --{ import = "plugins/auto-save" },
     { import = "plugins/bufferline" },
     { import = "plugins/cmp" },
     { import = "plugins/copilot" },
@@ -45,7 +45,7 @@ require("lazy").setup({
     { import = "plugins/diffview" },
     { import = "plugins/git-messenger" },
     { import = "plugins/gitsigns" },
-    { import = "plugins/git-blame" },
+    --{ import = "plugins/git-blame" },
     { import = "plugins/indent-blankline" },
     --{ import = "plugins/lastplace" },
     { import = "plugins/lsp" },
