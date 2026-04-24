@@ -1,13 +1,7 @@
 [tools]
-"asdf:perl" = "5.16.3"
 delta = "latest"
 fzf = "latest"
 mysql = "latest"
 neovim = "latest"
 node = "lts"
-python = "latest"
-ruby = "latest"
 tmux = "latest"
-
-[settings]
-idiomatic_version_file_enable_tools = ["ruby"]
