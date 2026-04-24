@@ -63,8 +63,8 @@ if [ -f "$ZSH_HISTORY_PATH" ]; then
 fi
 
 # プロンプトテンプレートがあればそれを使ってなかったらコピー
-[[ ! -e $HOME/moove/tak/dotfiles/.zshrc.prompt ]] && cp $HOME/moove/tak/dotfiles/.zshrc.prompt_template $HOME/moove/tak/dotfiles/.zshrc.prompt
-[[ -e $HOME/moove/tak/dotfiles/.zshrc.prompt ]] && source $HOME/moove/tak/dotfiles/.zshrc.prompt
+[[ ! -e $HOME/dotfiles/.zshrc.prompt ]] && cp $HOME/dotfiles/.zshrc.prompt_template $HOME/dotfiles/.zshrc.prompt
+[[ -e $HOME/dotfiles/.zshrc.prompt ]] && source $HOME/dotfiles/.zshrc.prompt
 
 alias tm='tmux'
 alias dc='docker compose'
