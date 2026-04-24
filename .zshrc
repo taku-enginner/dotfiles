@@ -20,33 +20,9 @@ export PATH="/opt/homebrew/bin:$PATH"
 export APPLE_ID="taku112ne@gmail.com"
 export APP_SPECIFIC_PASSWORD="bavl-tykx-abwp-wash"
 export NTFY_TOPIC="aikakeibo-taku-2024"
-
-confirm_exe() {
-  echo -n "$1 (y/N) --> "
-  read -r yn
-  case $yn in
-  y | Y)
-    echo '実行します...'
-    return 0
-    ;;
-  *)
-    echo '中止しました'
-    return 1
-    ;;
-  esac
-}
-
-create_symlink() {
-  if [ ! -e "$1" ]; then
-    echo "リンク先が存在しません: $1"
-  elif [ -e "$2" ]; then
-    echo "同名のファイルが既に存在します: $2"
-    confirm_exe "このファイルを削除してシンボリックリンクを作成しますか?" && rm "$2" && ln -s "$1" "$2" && echo "シンボリックリンクを作成しました: $2 -> $1"
-  else
-    ln -s "$1" "$2"
-    echo "シンボリックリンクを作成しました: $2 -> $1"
-  fi
-}
+export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/local/bin:$PATH"
+export USER=$(whoami)
 
 install_sheldon() {
   curl --proto '=https' -fLsS https://rossmacarthur.github.io/install/crate.sh | bash -s -- --repo rossmacarthur/sheldon --to $HOME/moove/tak/.local/bin &&
@@ -54,11 +30,53 @@ install_sheldon() {
 }
 type $HOME/moove/tak/.local/bin/sheldon >/dev/null || install_sheldon
 
+install_mise() {
+  cd "$HOME/moove/tak" && ([ -e "$HOME/moove/tak/.local/bin/mise" ] || curl https://mise.run | sh)
+}
 
-if [ "$HOST" = 'takakusakitakushinnoMacBook-Air.local' -o "$HOST" = 'tak.moove.bz' -o "$HOST" = 'LAPTOP-0Q4P8DSR' -o "$SLEDGE_CONFIG" = 'development' ]; then
-  source "$HOME/moove/tak/dotfiles/.zshrc.local"
-else #プロジェクトサーバーの場合
-  source "$HOME/moove/tak/dotfiles/.zshrc.project"
+export XDG_CONFIG_HOME="$HOME/moove/tak/.config"
+[ -e $HOME/moove/tak/local/bin ] || mkdir -p $HOME/local/bin # ユーザー独自のスクリプト格納場所
+[ -e $HOME/moove/tak/tmp ]       || mkdir -p $HOME/tmp
+
+if [ ! -d "$XDG_CONFIG_HOME" ]; then
+  mkdir -p $XDG_CONFIG_HOME
+  create_symlink "$HOME/moove/tak/dotfiles/git"     "$XDG_CONFIG_HOME/git"
+  create_symlink "$HOME/moove/tak/dotfiles/sheldon" "$XDG_CONFIG_HOME/sheldon"
+  create_symlink "$HOME/moove/tak/dotfiles/nvim"    "$XDG_CONFIG_HOME/nvim"
+  if [ "$HOST" = 'tak.moove.bz' -o "$HOST" = 'LAPTOP-0Q4P8DSR' ]; then
+    create_symlink "$HOME/moove/tak/dotfiles/mise"    "$XDG_CONFIG_HOME/mise"
+  fi
+  if ! command -v mise >/dev/null; then
+    install_mise
+  fi
+  if command -v mise >/dev/null; then
+    mise install
+  fi
+fi
+
+# zshのコマンド履歴を見れるようにする
+ZSH_HISTORY_PATH="$HOME/moove/tak/.zsh_history"
+if [ -f "$ZSH_HISTORY_PATH" ]; then
+  if [ ! -r "$ZSH_HISTORY_PATH" -a ! -w "$ZSH_HISTORY_PATH" ]; then
+    sudo chmod 755 "$ZSH_HISTORY_PATH"
+  fi
+fi
+
+# プロンプトテンプレートがあればそれを使ってなかったらコピー
+[[ ! -e $HOME/moove/tak/dotfiles/.zshrc.prompt ]] && cp $HOME/moove/tak/dotfiles/.zshrc.prompt_template $HOME/moove/tak/dotfiles/.zshrc.prompt
+[[ -e $HOME/moove/tak/dotfiles/.zshrc.prompt ]] && source $HOME/moove/tak/dotfiles/.zshrc.prompt
+
+alias tm='tmux'
+alias dc='docker compose'
+alias dp='docker ps'
+alias ds='docker stop'
+alias docker_images_sort_repository='docker images | tail -n +2 | sort -k1'
+alias docker_rm_none_images='docker rmi $(docker images -f "dangling=true" -q)'
+alias share_dotfiles='cp -r ~/moove/tak/* ~/taku-enginner/'
+
+if ! command -v hw > /dev/null; then
+  mkdir -p $HOME/local/tmp
+  cd ${HOME}/local/tmp && git clone https://github.com/tkengo/highway.git && cd highway && ./tools/build.sh && mv hw ${HOME}/local/bin
 fi
 
 eval "$(sheldon source)"
@@ -72,7 +90,6 @@ SAVEHIST=10000
 HISTFILE=$HOME/moove/tak/.zsh_history
 
 # alias
-alias al='alias | sort'
 alias git-ignore-ls="echo '=== Ignored Files ===' && git ls-files --others --ignored --exclude-standard ./"
 alias ga='git add'
 alias gb='git branch'
@@ -88,9 +105,6 @@ alias ll='ls -Fal --color=auto'
 alias grep="GREP_COLORS='mt=1;32' grep --color"
 type nvim > /dev/null && alias vi="nvim"
 alias env='env | sort'
-
-# TOMOS
-#alias ddiu='docker compose down app web && docker image rm tomos-app && docker compose up -d && docker compose exec -it app tail -n +1 -F /var/log/api_koshida.log'
 
 # history
 function fhistory() {
@@ -120,10 +134,6 @@ bindkey '^D' kill-word         # 単語ごとに削除する
 bindkey '^A' beginning-of-line # 頭行に移動する
 bindkey '^E' end-of-line       # 行末に移動する
 bindkey '^K' kill-line         # カーソルから行末まで削除
-
-
-eval "$(rbenv init -)"
-cd $HOME
 
 export NVM_DIR="$HOME/moove/tak/.config/nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
