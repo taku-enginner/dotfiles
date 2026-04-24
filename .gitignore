@@ -1,1 +1,5 @@
-ghe_rsa.encrypted
+.zshrc.prompt
+tmux-client-*
+resize-pane
+.zcompdump*
+nvim/lazy-lock.json
