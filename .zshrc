@@ -103,7 +103,6 @@ alias gr='git remote'
 alias l='ls -Fal --color=auto'
 alias ll='ls -Fal --color=auto'
 alias grep="GREP_COLORS='mt=1;32' grep --color"
-alias nvim='neovim'
 alias vi='nvim'
 type nvim > /dev/null && alias vi="nvim"
 alias env='env | sort'
