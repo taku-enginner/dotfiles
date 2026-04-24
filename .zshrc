@@ -34,17 +34,17 @@ install_mise() {
   cd "$HOME/moove/tak" && ([ -e "$HOME/moove/tak/.local/bin/mise" ] || curl https://mise.run | sh)
 }
 
-export XDG_CONFIG_HOME="$HOME/moove/tak/.config"
+export XDG_CONFIG_HOME="$HOME/.config"
 [ -e $HOME/moove/tak/local/bin ] || mkdir -p $HOME/local/bin # ユーザー独自のスクリプト格納場所
 [ -e $HOME/moove/tak/tmp ]       || mkdir -p $HOME/tmp
 
 if [ ! -d "$XDG_CONFIG_HOME" ]; then
   mkdir -p $XDG_CONFIG_HOME
-  create_symlink "$HOME/moove/tak/dotfiles/git"     "$XDG_CONFIG_HOME/git"
-  create_symlink "$HOME/moove/tak/dotfiles/sheldon" "$XDG_CONFIG_HOME/sheldon"
-  create_symlink "$HOME/moove/tak/dotfiles/nvim"    "$XDG_CONFIG_HOME/nvim"
+  ln -s "$HOME/dotfiles/git"     "$XDG_CONFIG_HOME/git"
+  ln -s "$HOME/dotfiles/sheldon" "$XDG_CONFIG_HOME/sheldon"
+  ln -s "$HOME/dotfiles/nvim"    "$XDG_CONFIG_HOME/nvim"
   if [ "$HOST" = 'tak.moove.bz' -o "$HOST" = 'LAPTOP-0Q4P8DSR' ]; then
-    create_symlink "$HOME/moove/tak/dotfiles/mise"    "$XDG_CONFIG_HOME/mise"
+    ln -s "$HOME/dotfiles/mise"    "$XDG_CONFIG_HOME/mise"
   fi
   if ! command -v mise >/dev/null; then
     install_mise
