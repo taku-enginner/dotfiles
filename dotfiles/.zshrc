@@ -16,6 +16,10 @@ local WHITE=$'%{\e[39\m%}'
 local CLEAR=$'%{\e[0m%}'
 
 export EDITOR=nvim
+export PATH="/opt/homebrew/bin:$PATH"
+export APPLE_ID="taku112ne@gmail.com"
+export APP_SPECIFIC_PASSWORD="bavl-tykx-abwp-wash"
+export NTFY_TOPIC="aikakeibo-taku-2024"
 
 confirm_exe() {
   echo -n "$1 (y/N) --> "
@@ -51,8 +55,8 @@ install_sheldon() {
 type $HOME/moove/tak/.local/bin/sheldon >/dev/null || install_sheldon
 
 
-if [ "$HOST" = 'tak.moove.bz' -o "$HOST" = 'LAPTOP-0Q4P8DSR' -o "$SLEDGE_CONFIG" = 'development' ]; then
-  source "/home/tak/moove/tak/dotfiles/.zshrc.local"
+if [ "$HOST" = 'takakusakitakushinnoMacBook-Air.local' -o "$HOST" = 'tak.moove.bz' -o "$HOST" = 'LAPTOP-0Q4P8DSR' -o "$SLEDGE_CONFIG" = 'development' ]; then
+  source "$HOME/moove/tak/dotfiles/.zshrc.local"
 else #プロジェクトサーバーの場合
   source "$HOME/moove/tak/dotfiles/.zshrc.project"
 fi
@@ -117,3 +121,10 @@ bindkey '^A' beginning-of-line # 頭行に移動する
 bindkey '^E' end-of-line       # 行末に移動する
 bindkey '^K' kill-line         # カーソルから行末まで削除
 
+
+eval "$(rbenv init -)"
+cd $HOME
+
+export NVM_DIR="$HOME/moove/tak/.config/nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
