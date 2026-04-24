@@ -84,8 +84,6 @@ git_user_info() {
   fi
 }
 
-INSTANCE_INFO=$(grep -oE '/toro/ec2/[^/]+/[^/]+/[^/]+/i-[0-9a-f]+' /opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log | awk -F'/' '{print $4 "-" $5 " (" $7 ") "}' | tail -n 1)
-
 precmd_functions+=(git_user_info)
 
 if [ $UID -eq 0 ]; then
