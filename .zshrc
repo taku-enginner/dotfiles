@@ -34,24 +34,26 @@ install_mise() {
   cd "$HOME/moove/tak" && ([ -e "$HOME/moove/tak/.local/bin/mise" ] || curl https://mise.run | sh)
 }
 
-export XDG_CONFIG_HOME="$HOME/.config"
-[ -e $HOME/moove/tak/local/bin ] || mkdir -p $HOME/local/bin # ユーザー独自のスクリプト格納場所
-[ -e $HOME/moove/tak/tmp ]       || mkdir -p $HOME/tmp
+# config dir
+[ -d "$XDG_CONFIG_HOME" ] || mkdir -p "$XDG_CONFIG_HOME"
 
-if [ ! -d "$XDG_CONFIG_HOME" ]; then
-  mkdir -p $XDG_CONFIG_HOME
-  ln -s "$HOME/dotfiles/git"     "$XDG_CONFIG_HOME/git"
-  ln -s "$HOME/dotfiles/sheldon" "$XDG_CONFIG_HOME/sheldon"
-  ln -s "$HOME/dotfiles/nvim"    "$XDG_CONFIG_HOME/nvim"
-  if [ "$HOST" = 'tak.moove.bz' -o "$HOST" = 'LAPTOP-0Q4P8DSR' ]; then
-    ln -s "$HOME/dotfiles/mise"    "$XDG_CONFIG_HOME/mise"
-  fi
-  if ! command -v mise >/dev/null; then
-    install_mise
-  fi
-  if command -v mise >/dev/null; then
-    mise install
-  fi
+# symlinks
+[ -L "$XDG_CONFIG_HOME/git" ]     || ln -s "$HOME/dotfiles/git"     "$XDG_CONFIG_HOME/git"
+[ -L "$XDG_CONFIG_HOME/sheldon" ] || ln -s "$HOME/dotfiles/sheldon" "$XDG_CONFIG_HOME/sheldon"
+[ -L "$XDG_CONFIG_HOME/nvim" ]    || ln -s "$HOME/dotfiles/nvim"    "$XDG_CONFIG_HOME/nvim"
+
+if [ "$HOST" = 'tak.moove.bz' ] || [ "$HOST" = 'LAPTOP-0Q4P8DSR' ]; then
+  [ -L "$XDG_CONFIG_HOME/mise" ] || ln -s "$HOME/dotfiles/mise" "$XDG_CONFIG_HOME/mise"
+fi
+
+# mise install
+if ! command -v mise >/dev/null; then
+  install_mise
+fi
+
+# mise packages
+if command -v mise >/dev/null; then
+  mise install
 fi
 
 # zshのコマンド履歴を見れるようにする
