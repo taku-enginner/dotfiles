@@ -110,6 +110,11 @@ alias vi='nvim'
 type nvim > /dev/null && alias vi="nvim"
 alias env='env | sort'
 
+#複雑なコマンドはエイリアスではなく関数で扱う
+vi_edit() {
+  gs | grep '^[ M]' | awk '{print $2}' | xargs nvim
+}
+
 # history
 function fhistory() {
   BUFFER=$(history -n -r 1 | fzf --reverse --no-sort +m --query "$LBUFFER" --prompt="History > ")
@@ -142,3 +147,5 @@ bindkey '^K' kill-line         # カーソルから行末まで削除
 export NVM_DIR="$HOME/moove/tak/.config/nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+cd $HOME
