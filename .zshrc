@@ -34,7 +34,7 @@ install_mise() {
   cd "$HOME/moove/tak" && ([ -e "$HOME/moove/tak/.local/bin/mise" ] || curl https://mise.run | sh)
 }
 
-export XDG_CONFIG_HOME='/home/tak/.config'
+export XDG_CONFIG_HOME="$HOME/.config"
 # config dir
 [ -d "$XDG_CONFIG_HOME" ] || mkdir -p "$XDG_CONFIG_HOME"
 
