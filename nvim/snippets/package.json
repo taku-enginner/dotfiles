@@ -1,0 +1,15 @@
+{
+  "name": "my-custom-snippets",
+  "contributes": {
+    "snippets": [
+      {
+        "language": "perl",
+        "path": "./perl.json"
+      },
+      {
+        "language": "markdown",
+        "path": "./md.json"
+      }
+    ]
+  }
+}

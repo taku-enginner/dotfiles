@@ -1,56 +1,7 @@
 vim.fn.jobstart({"bash", "-c", "if command -v ruby >/dev/null 2>&1 && command -v gem >/dev/null 2>&1; then gem install solargraph; fi"})
 
+-- nvim-cmp 本体の定義は plugins/cmp.lua に一本化している
 return {
-  {
-    "hrsh7th/nvim-cmp",
-    -- `dependencies`は、nvim-cmpが機能するために必要な追加プラグインです
-    dependencies = {
-      "hrsh7th/cmp-nvim-lsp", -- LSPからの補完
-      "hrsh7th/cmp-buffer",   -- 開いているバッファ内の単語からの補完
-      "hrsh7th/cmp-path",     -- ファイルパスの補完
-      "zbirenbaum/copilot-cmp", -- これがCopilotからの補完を提供します
-      -- スニペットを使いたい場合は以下のコメントを外します
-      -- "L3MON4D3/LuaSnip",
-      -- "saadparwaiz1/cmp_luasnip",
-    },
-    -- `config`関数内でプラグインのセットアップを行います
-    config = function()
-      local cmp = require('cmp')
-      local cmp_select = { behavior = cmp.SelectBehavior.Select }
-
-      cmp.setup({
-        -- スニペットの設定（もし使う場合）
-        -- snippet = {
-        --   expand = function(args)
-        --     require('luasnip').lsp_expand(args.body)
-        --   end,
-        -- },
-
-        -- 【重要】キーマッピングの設定
-        mapping = cmp.mapping.preset.insert({
-          -- 候補を選択
-          ['<C-p>'] = cmp.mapping.select_prev_item(cmp_select),
-          ['<C-n>'] = cmp.mapping.select_next_item(cmp_select),
-
-          -- 補完を確定
-          ['<CR>'] = cmp.mapping.confirm({ select = true }), -- Enterキーで確定
-          ['<C-Space>'] = cmp.mapping.complete(), -- 手動で補完を開始
-
-          -- 補完ウィンドウを閉じる
-          ['<C-e>'] = cmp.mapping.abort(),
-        }),
-
-        -- 補完ソース（どこから候補を持ってくるか）の設定
-        sources = cmp.config.sources({
-          { name = "nvim_lsp" },
-          { name = "copilot" },
-          -- { name = "luasnip" }, -- スニペットを使う場合はコメントを外す
-          { name = "buffer" },
-          { name = "path" },
-        }),
-      }) -- cmp.setup
-    end,
-  },
   -- (1) Mason.nvim プラグイン
   {
     "williamboman/mason.nvim",

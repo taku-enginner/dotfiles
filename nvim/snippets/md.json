@@ -1,0 +1,16 @@
+{
+  "highlight": {
+    "prefix": "=",
+    "body": [
+      "==$1=="
+    ],
+    "description": "ハイライト"
+  },
+  "todo": {
+    "prefix": "to",
+    "body": [
+      "- [ ] $1"
+    ],
+    "description": "todo"
+  }
+}

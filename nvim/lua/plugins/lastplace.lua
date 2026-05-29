@@ -1,5 +1,5 @@
 return {
-  'ethanholz/lastplace.nvim',
+  'ethanholz/nvim-lastplace',
   -- lastplace.nvim の設定
   opts = {
     lastplace_ignore = "gitcommit,gitrebase,svn,hgcommit", -- 無視するファイルタイプ

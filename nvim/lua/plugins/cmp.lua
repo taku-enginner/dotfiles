@@ -1,10 +1,13 @@
 return {
   -- 補完フレームワーク本体
   'hrsh7th/nvim-cmp',
+  event = "InsertEnter",
   dependencies = {
     -- 必須：LSP補完、バッファ補完
     'hrsh7th/cmp-nvim-lsp',
     'hrsh7th/cmp-buffer',
+    -- ファイルパス補完
+    'hrsh7th/cmp-path',
     -- スニペットエンジン
     'L3MON4D3/LuaSnip',
     -- スニペットの候補を提供する
