@@ -22,7 +22,7 @@
 | リポジトリ | 内容 |
 | --- | --- |
 | **dotfiles**(public, 本リポ) | 汎用設定。zsh / tmux / nvim / git / sheldon / mise。`fssm`・`frds` 等の会社非依存ツールも含む |
-| **dotfiles-private**(private) | secrets・会社固有設定(AWS profile / bastion / 作業ディレクトリ等)。`zshrc.private` を `.zshrc` 末尾で source |
+| **dotfiles-private**(private) | 業務プロジェクト固有設定(secrets・AWS profile・bastion・作業ディレクトリ等)。`zshrc.private` を `.zshrc` 末尾で source |
 
 `XDG_CONFIG_HOME` は `setup.sh` 実行時に対話選択し `~/.zshenv` に永続化する(`.zshrc` 自体は上書きしない)。
 
@@ -105,7 +105,7 @@ private リポの clone でも同様にトークンを使用する。
 ## private リポジトリ
 
 `taku-enginner/dotfiles-private` を `~/dotfiles-private` に clone して連携する。
-secrets・会社固有設定を保持し、`.zshrc` 末尾で `~/dotfiles-private/zshrc.private` を source する(存在しなければスキップ)。
+業務プロジェクト固有設定(secrets・AWS profile・bastion・作業ディレクトリ等)を保持し、`.zshrc` 末尾で `~/dotfiles-private/zshrc.private` を source する(存在しなければスキップ)。
 
 ## Docker コンテナ操作
 
