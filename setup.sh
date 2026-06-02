@@ -105,13 +105,13 @@ if [ -x "$mise_bin" ]; then
   "$mise_bin" install
 fi
 
-# --- private dotfiles(secrets / 会社固有設定)を clone ---
+# --- private dotfiles(業務プロジェクト固有設定: secrets・AWS profile・bastion・作業ディレクトリ等)を clone ---
 # 認証は git 標準のプロンプト(GitHub ユーザー名 + PAT)。失敗・中止しても汎用設定は維持。
 private_dir="$HOME/dotfiles-private"
 private_url="https://github.com/taku-enginner/dotfiles-private.git"
 if [ -d "$private_dir/.git" ]; then
   echo "private dotfiles は既に存在: $private_dir"
-elif confirm_exe "private dotfiles ($private_url) を clone しますか?"; then
+elif confirm_exe "private dotfiles (業務プロジェクト固有設定) を clone しますか? ($private_url)"; then
   git clone "$private_url" "$private_dir" ||
     echo "警告: private dotfiles の clone に失敗。汎用設定のみで続行します。" >&2
 fi
