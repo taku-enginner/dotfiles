@@ -242,6 +242,20 @@ function frds() {
   MYSQL_PWD="$db_pass" mysql -h 127.0.0.1 -P "$local_port" -u "$db_user"
 }
 
+# imgcat: 画像ファイルを端末に表示(iTerm2 inline image protocol)
+# 対応端末: iTerm2 / WezTerm(Windows含む)。Mac/Windows 両方で動く。
+# 注意: tmux 内では再描画で画像が消える/欠けるため tmux の外で使うこと。
+imgcat() {
+  if [ ! -f "$1" ]; then
+    echo "usage: imgcat <image-file>"
+    return 1
+  fi
+  local size data
+  size=$(wc -c < "$1")
+  data=$(base64 < "$1" | tr -d '\n')  # GNU/macOS 両対応(-w0 を使わない)
+  printf '\033]1337;File=inline=1;size=%s;width=auto;height=auto:%s\007\n' "$size" "$data"
+}
+
 cd $HOME
 
 # マシン固有・会社固有設定(secrets / AWS profile / bastion 等)は private リポが持つ
