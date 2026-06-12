@@ -86,6 +86,7 @@ alias ccsession='~/utils/ccsession/ccsession'
 alias sni_perl="vi $DOTFILES_DIR/nvim/snippets/perl.json"
 alias sni_md="vi $DOTFILES_DIR/nvim/snippets/md.json"
 alias vi_edits='vi $(git status -s | awk "{print \$2}")'
+alias moove='AWS_PROFILE=moove'
 
 #複雑なコマンドはエイリアスではなく関数で扱う
 vi_edit() {
