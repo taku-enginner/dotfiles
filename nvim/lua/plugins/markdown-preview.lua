@@ -17,9 +17,10 @@ return {
       vim.g.mkdp_echo_preview_url = 1
       -- ヘッドレスでの xdg-open 失敗(processTicksAndRejections)抑止: 起動を no-op に
       vim.g.mkdp_browser = "true"
+      -- ポート固定（ssh -L の転送先を予測可能にする）。
+      -- WSLローカルでは固定しない: ssh の LocalForward 8765 と衝突し EADDRINUSE になる
+      vim.g.mkdp_port = "8765"
     end
-    -- ポート固定（ssh -L の転送先を予測可能にする）
-    vim.g.mkdp_port = "8765"
     -- ブラウザを自動で開く
     vim.g.mkdp_auto_start = 0
     vim.g.mkdp_auto_close = 1
