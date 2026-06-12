@@ -86,6 +86,21 @@ create_symlink "$DOTFILES_DIR/nvim"    "$XDG_CONFIG_HOME/nvim"
 create_symlink "$DOTFILES_DIR/mise"    "$XDG_CONFIG_HOME/mise"
 create_symlink "$DOTFILES_DIR/.zshrc"  "$HOME/.zshrc"
 
+# --- moovibe の Claude Code スキルを ~/.claude/skills へリンク ---
+# symlink なので moovibe を git pull すれば最新に追従する。skills/ 配下が増えても自動で拾う。
+# moovibe は手動 clone の作業リポジトリのため、無ければ警告のみでスキップ。
+moovibe_skills_dir="$HOME/work/moovibe/skills"
+claude_skills_dir="$HOME/.claude/skills"
+if [ -d "$moovibe_skills_dir" ]; then
+  mkdir -p "$claude_skills_dir"
+  for skill in "$moovibe_skills_dir"/*/; do
+    [ -d "$skill" ] || continue
+    create_symlink "${skill%/}" "$claude_skills_dir/$(basename "$skill")"
+  done
+else
+  echo "moovibe が見つからないため skills のリンクをスキップ: $moovibe_skills_dir" >&2
+fi
+
 # --- sheldon(必須): 未導入なら自動インストール ---
 if ! command -v sheldon >/dev/null && [ ! -x "$HOME/.local/bin/sheldon" ]; then
   echo "sheldon をインストールします..."
