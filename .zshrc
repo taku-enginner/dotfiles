@@ -53,6 +53,16 @@ if ! command -v hw > /dev/null; then
   cd ${HOME}/local/tmp && git clone https://github.com/tkengo/highway.git && cd highway && ./tools/build.sh && mv hw ${HOME}/local/bin
 fi
 
+# WSL interop が追加する Windows 側 PATH(/mnt/c/...)を除外する。
+# drvfs の stat が遅く、zsh-syntax-highlighting のキーストローク毎の
+# コマンド検索で約180ms/打のラグが出るため。Windows 製ツールは下の alias で個別に残す。
+path=(${path:#/mnt/c/*})
+typeset -U path
+[[ -e "/mnt/c/Users/taku1/AppData/Local/Programs/Microsoft VS Code/bin/code" ]] && \
+  alias code="/mnt/c/Users/taku1/AppData/Local/Programs/Microsoft\ VS\ Code/bin/code"
+[[ -e "/mnt/c/Users/taku1/AppData/Local/Programs/cursor/resources/app/bin/cursor" ]] && \
+  alias cursor="/mnt/c/Users/taku1/AppData/Local/Programs/cursor/resources/app/bin/cursor"
+
 eval "$(sheldon source)"
 eval "$(mise activate zsh)"
 
