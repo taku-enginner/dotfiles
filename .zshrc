@@ -267,7 +267,7 @@ imgcat() {
   printf '\033]1337;File=inline=1;size=%s;width=auto;height=auto:%s\007\n' "$size" "$data"
 }
 
-cd $HOME
+cd $HOME/work
 
 # マシン固有・会社固有設定(secrets / AWS profile / bastion 等)は private リポが持つ
 [ -f "$HOME/dotfiles-private/zshrc.private" ] && source "$HOME/dotfiles-private/zshrc.private"
