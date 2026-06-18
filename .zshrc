@@ -267,6 +267,13 @@ imgcat() {
   printf '\033]1337;File=inline=1;size=%s;width=auto;height=auto:%s\007\n' "$size" "$data"
 }
 
+# tmuxの古いセッションを消す
+tmux list-sessions -F '#{session_name} #{session_created}' 2>/dev/null | while read name created; do
+  [ -z "$created" ] && continue
+  AGE=$(( $(date +%s) - created ))
+  [ $AGE -gt 86400 ] && tmux kill-session -t "$name" 2>/dev/null
+done
+
 cd $HOME
 
 # マシン固有・会社固有設定(secrets / AWS profile / bastion 等)は private リポが持つ
