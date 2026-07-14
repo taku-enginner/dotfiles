@@ -1,0 +1,8 @@
+/* markdown-preview.nvim カスタムCSS
+ * 同梱 page.css の #page-ctn { max-width: 900px } を上書きし、
+ * コンテンツ幅をウィンドウサイズに追従させる（左右に余白を残す）。 */
+#page-ctn {
+  max-width: 80%;
+  /* 余白（main の薄グレー #f6f8fa）はそのまま、中央のコンテンツ列だけ白にする */
+  background-color: #fff;
+}

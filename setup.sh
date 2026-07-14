@@ -86,6 +86,36 @@ create_symlink "$DOTFILES_DIR/nvim"    "$XDG_CONFIG_HOME/nvim"
 create_symlink "$DOTFILES_DIR/mise"    "$XDG_CONFIG_HOME/mise"
 create_symlink "$DOTFILES_DIR/.zshrc"  "$HOME/.zshrc"
 
+# --- moovibe の Claude Code スキルを ~/.claude/skills へリンク ---
+# symlink なので moovibe を git pull すれば最新に追従する。skills/ 配下が増えても自動で拾う。
+# moovibe は手動 clone の作業リポジトリのため、無ければ警告のみでスキップ。
+moovibe_skills_dir="$HOME/work/moovibe/skills"
+claude_skills_dir="$HOME/.claude/skills"
+if [ -d "$moovibe_skills_dir" ]; then
+  mkdir -p "$claude_skills_dir"
+  for skill in "$moovibe_skills_dir"/*/; do
+    [ -d "$skill" ] || continue
+    create_symlink "${skill%/}" "$claude_skills_dir/$(basename "$skill")"
+  done
+else
+  echo "moovibe が見つからないため skills のリンクをスキップ: $moovibe_skills_dir" >&2
+fi
+
+# --- personal-context の Claude Code コマンドを ~/.claude/commands へリンク ---
+# symlink なので personal-context を更新すれば最新に追従する。commands/ 配下が増えても自動で拾う。
+# これにより /spec-quiz 等を personal-context 配下に限らず全リポジトリから呼べる。
+pc_commands_dir="$HOME/personal-context/.claude/commands"
+claude_commands_dir="$HOME/.claude/commands"
+if [ -d "$pc_commands_dir" ]; then
+  mkdir -p "$claude_commands_dir"
+  for cmd in "$pc_commands_dir"/*.md; do
+    [ -f "$cmd" ] || continue
+    create_symlink "$cmd" "$claude_commands_dir/$(basename "$cmd")"
+  done
+else
+  echo "personal-context が見つからないため commands のリンクをスキップ: $pc_commands_dir" >&2
+fi
+
 # --- sheldon(必須): 未導入なら自動インストール ---
 if ! command -v sheldon >/dev/null && [ ! -x "$HOME/.local/bin/sheldon" ]; then
   echo "sheldon をインストールします..."

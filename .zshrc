@@ -53,6 +53,16 @@ if ! command -v hw > /dev/null; then
   cd ${HOME}/local/tmp && git clone https://github.com/tkengo/highway.git && cd highway && ./tools/build.sh && mv hw ${HOME}/local/bin
 fi
 
+# WSL interop が追加する Windows 側 PATH(/mnt/c/...)を除外する。
+# drvfs の stat が遅く、zsh-syntax-highlighting のキーストローク毎の
+# コマンド検索で約180ms/打のラグが出るため。Windows 製ツールは下の alias で個別に残す。
+path=(${path:#/mnt/c/*})
+typeset -U path
+[[ -e "/mnt/c/Users/taku1/AppData/Local/Programs/Microsoft VS Code/bin/code" ]] && \
+  alias code="/mnt/c/Users/taku1/AppData/Local/Programs/Microsoft\ VS\ Code/bin/code"
+[[ -e "/mnt/c/Users/taku1/AppData/Local/Programs/cursor/resources/app/bin/cursor" ]] && \
+  alias cursor="/mnt/c/Users/taku1/AppData/Local/Programs/cursor/resources/app/bin/cursor"
+
 eval "$(sheldon source)"
 eval "$(mise activate zsh)"
 
@@ -86,7 +96,7 @@ alias ccsession='~/utils/ccsession/ccsession'
 alias sni_perl="vi $DOTFILES_DIR/nvim/snippets/perl.json"
 alias sni_md="vi $DOTFILES_DIR/nvim/snippets/md.json"
 alias vi_edits='vi $(git status -s | awk "{print \$2}")'
-alias moove='--profile moove'
+alias moove='AWS_PROFILE=moove'
 
 #複雑なコマンドはエイリアスではなく関数で扱う
 vi_edit() {
@@ -242,6 +252,27 @@ function frds() {
 
   MYSQL_PWD="$db_pass" mysql -h 127.0.0.1 -P "$local_port" -u "$db_user"
 }
+
+# imgcat: 画像ファイルを端末に表示(iTerm2 inline image protocol)
+# 対応端末: iTerm2 / WezTerm(Windows含む)。Mac/Windows 両方で動く。
+# 注意: tmux 内では再描画で画像が消える/欠けるため tmux の外で使うこと。
+imgcat() {
+  if [ ! -f "$1" ]; then
+    echo "usage: imgcat <image-file>"
+    return 1
+  fi
+  local size data
+  size=$(wc -c < "$1")
+  data=$(base64 < "$1" | tr -d '\n')  # GNU/macOS 両対応(-w0 を使わない)
+  printf '\033]1337;File=inline=1;size=%s;width=auto;height=auto:%s\007\n' "$size" "$data"
+}
+
+# tmuxの古いセッションを消す
+tmux list-sessions -F '#{session_name} #{session_created}' 2>/dev/null | while read name created; do
+  [ -z "$created" ] && continue
+  AGE=$(( $(date +%s) - created ))
+  [ $AGE -gt 86400 ] && tmux kill-session -t "$name" 2>/dev/null
+done
 
 cd $HOME
 
