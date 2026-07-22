@@ -1,4 +1,6 @@
 .zshrc.prompt
+.zshrc.env
+AuthKey_H8W9N4DNG2.p8
 tmux-client-*
 resize-pane
 .zcompdump*

@@ -66,7 +66,7 @@ esac
 # シェル起動時(ツール初期化より前)に効かせる必要があるため ~/.zshenv に永続化(マシンローカル)
 zshenv="$HOME/.zshenv"
 if [ -f "$zshenv" ] && grep -q '^export XDG_CONFIG_HOME=' "$zshenv"; then
-  sed -i "s#^export XDG_CONFIG_HOME=.*#export XDG_CONFIG_HOME=\"$XDG_CONFIG_HOME\"#" "$zshenv"
+  sed -i '' "s#^export XDG_CONFIG_HOME=.*#export XDG_CONFIG_HOME=\"$XDG_CONFIG_HOME\"#" "$zshenv"
 else
   echo "export XDG_CONFIG_HOME=\"$XDG_CONFIG_HOME\"" >> "$zshenv"
 fi
