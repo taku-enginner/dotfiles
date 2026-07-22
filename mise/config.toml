@@ -1,15 +1,9 @@
 [tools]
-"asdf:perl" = "5.16.3"
 delta = "latest"
 fzf = "latest"
+herdr = "latest"
 mysql = "latest"
 neovim = "latest"
 node = "lts"
 python = "latest"
-ruby = "latest"
 terraform = "latest"
-tmux = "latest"
-go = "1.26.2"
-
-[settings]
-idiomatic_version_file_enable_tools = ["ruby"]
