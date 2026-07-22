@@ -5099,3 +5099,4 @@
 2026-07-22T00:39:14.913174Z  WARN herdr::raw_input: flushing lone escape after input timeout; if this follows an alt chord or focus switch it may reach the pane as plain esc bytes=[27]
 2026-07-22T00:39:20.096787Z  INFO herdr::pane: agent changed pane=17 previous_agent=Some(Claude) agent=None pgid=Some(321405)
 2026-07-22T00:39:24.790663Z  INFO herdr::logging: session saved event="persist.save" subsystem="persist" outcome="ok" path=/home/tak/.config/herdr/session.json workspaces=1
+2026-07-22T00:40:05.062025Z  WARN herdr::raw_input: flushing lone escape after input timeout; if this follows an alt chord or focus switch it may reach the pane as plain esc bytes=[27]
