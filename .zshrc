@@ -47,6 +47,8 @@ alias dp='docker ps'
 alias ds='docker stop'
 alias docker_images_sort_repository='docker images | tail -n +2 | sort -k1'
 alias docker_rm_none_images='docker rmi $(docker images -f "dangling=true" -q)'
+alias gs-='git switch -'
+alias gss='git switch staging'
 
 if ! command -v hw > /dev/null; then
   mkdir -p $HOME/local/tmp
