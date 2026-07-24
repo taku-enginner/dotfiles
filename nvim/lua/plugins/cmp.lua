@@ -8,32 +8,26 @@ return {
     'hrsh7th/cmp-buffer',
     -- ファイルパス補完
     'hrsh7th/cmp-path',
-    -- スニペットエンジン
-    'L3MON4D3/LuaSnip',
-    -- スニペットの候補を提供する
-    'saadparwaiz1/cmp_luasnip',
     'petertriho/cmp-git',
   },
   config = function()
     local cmp = require('cmp')
-    local luasnip = require('luasnip')
     local select_opts = { behavior = cmp.SelectBehavior.Select }
 
     cmp.setup({
       snippet = {
-        -- luasnipでスニペットを展開するように設定
+        -- 組み込み vim.snippet で LSP 由来のスニペットを展開(luasnip 廃止)
         expand = function(args)
-          luasnip.lsp_expand(args.body)
+          vim.snippet.expand(args.body)
         end,
       },
       mapping = cmp.mapping.preset.insert({
-        -- ... (上記と同じキーマップ) ...
         ['<Tab>'] = cmp.mapping(function(fallback)
-          -- 候補がある場合、またはスニペットのジャンプポイントがある場合は移動
+          -- 補完候補があれば次へ、スニペットのジャンプ先があれば移動
           if cmp.visible() then
             cmp.select_next_item(select_opts)
-          elseif luasnip.expand_or_jumpable() then
-            luasnip.expand_or_jump()
+          elseif vim.snippet.active({ direction = 1 }) then
+            vim.snippet.jump(1)
           else
             fallback()
           end
@@ -41,7 +35,6 @@ return {
       }),
       sources = cmp.config.sources({
         { name = 'nvim_lsp' },
-        { name = 'luasnip' }, -- スニペット候補を追加
         { name = 'buffer' },
         { name = 'path' },
       }),
