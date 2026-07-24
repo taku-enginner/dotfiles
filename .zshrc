@@ -1,6 +1,6 @@
 # .zshrc — セクション構成:
 #   補完 / 環境変数 / PATH / 色 / プロンプト / 履歴 / zshオプション /
-#   キーバインド / エイリアス / ツール初期化 / 関数 / マシン固有
+#   キーバインド / エイリアス / ツール初期化 / エディタ / 関数 / マシン固有
 # セットアップ(symlink作成・ツール導入)は setup.sh が担う。
 # XDG_CONFIG_HOME は環境側が設定済みなら上書きしない(未設定でも各ツールが ~/.config を既定採用)。
 # secrets・会社固有設定は private リポ(末尾で source)が持つ。
@@ -10,8 +10,7 @@ autoload -Uz compinit
 compinit
 
 # ── 環境変数 ──
-# nvim があれば nvim、無ければ vim にフォールバック(サーバーには nvim を都度手動導入する運用)
-if type nvim >/dev/null 2>&1; then export EDITOR=nvim; else export EDITOR=vim; fi
+# EDITOR と alias vi は nvim が mise 管理のため「エディタ」セクション(mise activate 後)で設定する
 export LANG=ja_JP.UTF-8
 export LC_ALL=ja_JP.UTF-8
 export USER=$(whoami)
@@ -93,7 +92,6 @@ alias gl='git log --oneline'
 alias l='ll'
 alias ll='ls -Falh --color=auto'
 alias grep="GREP_COLORS='mt=1;32' grep --color"
-type nvim > /dev/null 2>&1 && alias vi='nvim'
 alias env='env | sort'
 alias ccsession='~/utils/ccsession/ccsession'
 alias vi_edits='vi $(git status -s | awk "{print \$2}")'
@@ -105,6 +103,17 @@ eval "$(mise activate zsh)"
 export NVM_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"                   # nvm 本体
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" # nvm 補完
+
+# ── エディタ ──
+# nvim は mise 管理のため、mise activate で PATH が通った後でないと type で検出できない。
+# このブロックをツール初期化より前に置くと必ず vim へ落ちるので順序を動かさないこと。
+# nvim が無い環境(未 mise install のサーバー等)では vim にフォールバックする。
+if type nvim >/dev/null 2>&1; then
+  export EDITOR=nvim
+  alias vi='nvim'
+else
+  export EDITOR=vim
+fi
 
 # ── 関数 ──
 # 関数定義(vi_edit / fhistory / fssm / frds 等)は別ファイルに分離(compinit 後に source)
