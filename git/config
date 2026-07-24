@@ -6,7 +6,7 @@
 [color]
   ui = auto
 [commit]
-  template = /home/tak/.config/git/messages
+  template = ~/.config/git/messages
 [alias]
   co = checkout
   cob = checkout -b

@@ -65,9 +65,12 @@ esac
 
 # シェル起動時(ツール初期化より前)に効かせる必要があるため ~/.zshenv に永続化(マシンローカル)
 zshenv="$HOME/.zshenv"
-if [ -f "$zshenv" ] && grep -q '^export XDG_CONFIG_HOME=' "$zshenv"; then
-  # 既存行を除去してから追記(GNU/BSD sed 非依存で移植性を確保。sed -i '' は macOS 専用で Linux では中断する)
-  grep -v '^export XDG_CONFIG_HOME=' "$zshenv" > "$zshenv.tmp" && mv "$zshenv.tmp" "$zshenv"
+# 既存の XDG_CONFIG_HOME 行を全除去してから1行だけ追記(冪等)。
+# sed -i '' は macOS 専用で Linux では中断するため grep フィルタで移植性を確保。
+# grep -v が全行除去(=マッチ0)で exit 1 を返しても || true で握り、必ず mv して .tmp を残さない。
+if [ -f "$zshenv" ]; then
+  grep -v '^export XDG_CONFIG_HOME=' "$zshenv" > "$zshenv.tmp" 2>/dev/null || true
+  mv "$zshenv.tmp" "$zshenv"
 fi
 echo "export XDG_CONFIG_HOME=\"$XDG_CONFIG_HOME\"" >> "$zshenv"
 
@@ -79,7 +82,6 @@ echo "HOME:            $HOME"
 mkdir -p "$HOME/.local/bin" "$XDG_CONFIG_HOME"
 
 # --- シンボリックリンク(mise install より前に張る必要がある) ---
-create_symlink "$DOTFILES_DIR/tmux"    "$XDG_CONFIG_HOME/tmux"
 create_symlink "$DOTFILES_DIR/git"     "$XDG_CONFIG_HOME/git"
 create_symlink "$DOTFILES_DIR/sheldon" "$XDG_CONFIG_HOME/sheldon"
 create_symlink "$DOTFILES_DIR/nvim"    "$XDG_CONFIG_HOME/nvim"
@@ -117,13 +119,13 @@ generate_claude_md() {
   fi
   local tmp
   tmp="$(mktemp)"
-  cat "$base" > "$tmp"
+  if ! cat "$base" > "$tmp"; then rm -f "$tmp"; return 1; fi
   if [ -f "$override" ]; then
     printf '\n' >> "$tmp"
     cat "$override" >> "$tmp"
   fi
   if [ -e "$out" ] || [ -L "$out" ]; then rm -f "$out"; fi
-  mv "$tmp" "$out"
+  mv "$tmp" "$out" || { rm -f "$tmp"; return 1; }
   echo "生成: $out (baseline ＋ override)"
 }
 
@@ -191,7 +193,7 @@ link_hooks() {
   local herdr_bak=""
   if [ -e "$dst/herdr-agent-state.sh" ]; then
     herdr_bak="$(mktemp)"
-    cat "$dst/herdr-agent-state.sh" > "$herdr_bak" 2>/dev/null || herdr_bak=""
+    cat "$dst/herdr-agent-state.sh" > "$herdr_bak" 2>/dev/null || { rm -f "$herdr_bak"; herdr_bak=""; }
   fi
   ensure_real_dir "$dst"
   local h
@@ -309,6 +311,22 @@ fi
 mise_bin=$(command -v mise || echo "$HOME/.local/bin/mise")
 if [ -x "$mise_bin" ]; then
   "$mise_bin" install
+fi
+
+# --- hw(highway: 高速 grep)を未導入なら clone + build する ---
+# 以前は .zshrc がシェル起動ごとに build していたが、起動を遅くするため setup.sh へ移設。
+if ! command -v hw >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/hw" ]; then
+  if confirm_exe "hw(highway) を clone してビルドしますか?"; then
+    hw_dir="$HOME/local/tmp/highway"
+    mkdir -p "$(dirname "$hw_dir")"
+    [ -d "$hw_dir/.git" ] || git clone https://github.com/tkengo/highway.git "$hw_dir" ||
+      echo "警告: highway の clone に失敗。" >&2
+    if [ -d "$hw_dir" ]; then
+      (cd "$hw_dir" && ./tools/build.sh) && mv "$hw_dir/hw" "$HOME/.local/bin/" &&
+        echo "hw を導入しました: $HOME/.local/bin/hw" ||
+        echo "警告: hw のビルドに失敗。" >&2
+    fi
+  fi
 fi
 
 # --- private dotfiles(業務プロジェクト固有設定: secrets・AWS profile・bastion・作業ディレクトリ等)を clone ---

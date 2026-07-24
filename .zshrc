@@ -1,6 +1,5 @@
 autoload -Uz compinit
 compinit
-set -g mouse on
 
 # color
 autoload -Uz colors
@@ -12,7 +11,7 @@ local YELLOW=$'%{\e[93m%}'
 local BLUE=$'%{\e[94m%}'
 local PURPLE=$'%{\e[95m%}'
 local CYAN=$'%{\e[96m%}'
-local WHITE=$'%{\e[39\m%}'
+local WHITE=$'%{\e[39m%}'
 local CLEAR=$'%{\e[0m%}'
 
 export EDITOR=nvim
@@ -32,8 +31,8 @@ DOTFILES_DIR="$(cd "$(dirname "$(readlink -f "${(%):-%x}")")" && pwd)"
 # zshのコマンド履歴ファイルの権限補正
 ZSH_HISTORY_PATH="$HOME/.zsh_history"
 if [ -f "$ZSH_HISTORY_PATH" ]; then
-  if [ ! -r "$ZSH_HISTORY_PATH" -a ! -w "$ZSH_HISTORY_PATH" ]; then
-    sudo chmod 755 "$ZSH_HISTORY_PATH"
+  if [ ! -r "$ZSH_HISTORY_PATH" ] && [ ! -w "$ZSH_HISTORY_PATH" ]; then
+    sudo chmod 600 "$ZSH_HISTORY_PATH"
   fi
 fi
 
@@ -47,11 +46,6 @@ alias dp='docker ps'
 alias ds='docker stop'
 alias docker_images_sort_repository='docker images | tail -n +2 | sort -k1'
 alias docker_rm_none_images='docker rmi $(docker images -f "dangling=true" -q)'
-
-if ! command -v hw > /dev/null; then
-  mkdir -p $HOME/local/tmp
-  cd ${HOME}/local/tmp && git clone https://github.com/tkengo/highway.git && cd highway && ./tools/build.sh && mv hw ${HOME}/local/bin
-fi
 
 # WSL interop が追加する Windows 側 PATH(/mnt/c/...)を除外する。
 # drvfs の stat が遅く、zsh-syntax-highlighting のキーストローク毎の
@@ -89,8 +83,7 @@ alias al='alias | sort'
 alias l='ll'
 alias ll='ls -Falh --color=auto'
 alias grep="GREP_COLORS='mt=1;32' grep --color"
-alias vi='nvim'
-type nvim > /dev/null && alias vi="nvim"
+type nvim > /dev/null 2>&1 && alias vi='nvim'
 alias env='env | sort'
 alias ccsession='~/utils/ccsession/ccsession'
 alias sni_perl="vi $DOTFILES_DIR/nvim/snippets/perl.json"
