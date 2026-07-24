@@ -46,3 +46,18 @@ vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
     vim.opt_local.expandtab = true  -- Tabキーでスペースを挿入
   end,
 })
+
+-- 外部で変更されたファイルを自動リロード(旧 vim-autoread プラグインの代替)
+-- autoread だけでは編集中に検知しないため、フォーカス/バッファ移動/カーソル静止で checktime する
+vim.api.nvim_create_autocmd({ "FocusGained", "BufEnter", "CursorHold", "CursorHoldI" }, {
+  pattern = "*",
+  command = "checktime",
+})
+
+-- リロードが起きたことを通知(nvim-notify があればそちらに表示される)
+vim.api.nvim_create_autocmd("FileChangedShellPost", {
+  pattern = "*",
+  callback = function()
+    vim.notify("ファイルがディスク上で変更されたため再読み込みしました", vim.log.levels.WARN)
+  end,
+})
