@@ -273,6 +273,9 @@ setup_claude() {
   create_symlink "$CLAUDE_BASE_DIR/statusline.py" "$CLAUDE_OUT_DIR/statusline.py"
   create_symlink "$CLAUDE_BASE_DIR/memory"        "$CLAUDE_OUT_DIR/memory"
 
+  # keybindings.json は baseline に無い個人設定なので dotfiles から直リンク(マージ不要)
+  create_symlink "$CLAUDE_PERSONAL_DIR/keybindings.json" "$CLAUDE_OUT_DIR/keybindings.json"
+
   generate_claude_md
   generate_settings
   link_skills
