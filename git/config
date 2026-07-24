@@ -1,8 +1,6 @@
 [user]
   email = tak@moove.co.jp
   name = Takuma TAKAKUSAGI
-[core]
-  editor = nvim
 [color]
   ui = auto
 [commit]

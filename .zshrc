@@ -10,7 +10,8 @@ autoload -Uz compinit
 compinit
 
 # ── 環境変数 ──
-export EDITOR=nvim
+# nvim があれば nvim、無ければ vim にフォールバック(サーバーには nvim を都度手動導入する運用)
+if type nvim >/dev/null 2>&1; then export EDITOR=nvim; else export EDITOR=vim; fi
 export LANG=ja_JP.UTF-8
 export LC_ALL=ja_JP.UTF-8
 export USER=$(whoami)
