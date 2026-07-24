@@ -8,6 +8,7 @@
 - [インストール](#インストール)
 - [setup.sh の動作](#setupsh-の動作)
 - [管理対象](#管理対象)
+- [Claude Code 設定](#claude-code-設定)
 - [private リポジトリ](#private-リポジトリ)
 
 ## 構成
@@ -54,6 +55,26 @@ git clone https://github.com/taku-enginner/dotfiles.git && \
 | `.zshrc` | `~/.zshrc` |
 
 その他: `~/.zshenv`(XDG の選択を保存)、`~/dotfiles-private/zshrc.private`(`.zshrc` から source)。
+
+## Claude Code 設定
+
+`~/.claude/` は「**会社 baseline ⊕ 個人設定**」を `setup.sh` が組み立てる。会社 baseline を絶対に汚染しないため、個人設定はすべて本リポ(`dotfiles/claude/`)に分離して外部から読み込む。
+
+| ソース | 役割 |
+| --- | --- |
+| `~/claude`(会社 baseline / 別リポ) | upstream ミラー。**読取専用・一切書き込まない**。CLAUDE.md・settings.json・skills・hooks・memory・statusline.py の baseline |
+| `dotfiles/claude/`(本リポ) | 個人設定。`CLAUDE.override.md`・`settings.override.json`・`settings.wsl.json`(WSL トースト) |
+| `~/work/moovibe/skills`(任意) | 業務スキル。あれば個別 link |
+| `~/personal-context/.claude/commands`(別リポ) | スラッシュコマンド。whole-dir symlink |
+
+`setup.sh` の組み立て(`setup_claude`):
+
+- **CLAUDE.md**: baseline ＋ `CLAUDE.override.md` を連結して**実ファイル生成**(symlink にすると personal-context の SessionStart フックが baseline 本体を汚染するため)
+- **settings.json**: baseline ⊕ `settings.override.json`(⊕ WSL 時 `settings.wsl.json`)を `jq` で**合成生成**(配列=結合／オブジェクト=deep merge／スカラー=後勝ち)。`settings.local.json` は user レベルでは読まれないため生成しない
+- **skills / hooks**: `~/.claude/{skills,hooks}` を**実ディレクトリ**にし、baseline と個人の両ソースから**個別 symlink**(丸ごと symlink しない＝どのリポの作業ツリーも汚さない)。herdr 管理 hook は herdr に委ねる
+- **commands**: personal-context を whole-dir symlink
+
+`~/claude/setup.sh` は実行しない(本 `setup.sh` が組み立てを全部担う)。会社 baseline を更新するときは `~/claude` で `git pull` するだけ。
 
 ## private リポジトリ
 

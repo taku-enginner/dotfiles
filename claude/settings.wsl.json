@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/toast-for-windows.sh 'Claude Code' '入力を待っています⌛'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/toast-for-windows.sh 'Claude Code' 'タスク完了🎉'"
+          }
+        ]
+      }
+    ]
+  }
+}
