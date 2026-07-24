@@ -5,3 +5,8 @@ tmux-client-*
 resize-pane
 .zcompdump*
 nvim/lazy-lock.json
+
+# herdr のランタイム生成物(ログ・セッション状態・ロック)
+herdr/*.log
+herdr/session.json
+herdr/.plugins.lock
