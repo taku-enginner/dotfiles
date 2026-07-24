@@ -48,10 +48,6 @@ install_sheldon() {
     bash -s -- --repo rossmacarthur/sheldon --to "$HOME/.local/bin"
 }
 
-is_wsl() {
-  grep -qi microsoft /proc/version 2>/dev/null
-}
-
 # --- パス導出(ホスト名に依存しない) ---
 DOTFILES_DIR=$(cd "$(dirname "${(%):-%x}")" && pwd)
 
@@ -131,12 +127,11 @@ generate_claude_md() {
   echo "生成: $out (baseline ＋ override)"
 }
 
-# settings.json: baseline ⊕ 個人 override(⊕ WSL断片)を jq で合成して実ファイル生成。
+# settings.json: baseline ⊕ 個人 override を jq で合成して実ファイル生成。
 # マージ規則は Claude Code 本体に合わせる(配列=結合／オブジェクト=deep merge／スカラー=後勝ち)。
 generate_settings() {
   local base="$CLAUDE_BASE_DIR/settings.json"
   local override="$CLAUDE_PERSONAL_DIR/settings.override.json"
-  local wsl="$CLAUDE_PERSONAL_DIR/settings.wsl.json"
   local out="$CLAUDE_OUT_DIR/settings.json"
   if ! command -v jq >/dev/null 2>&1; then
     echo "jq が無いため $out を生成できません(jq 導入後に再実行)" >&2
@@ -148,7 +143,6 @@ generate_settings() {
   fi
   local inputs=("$base")
   [ -f "$override" ] && inputs+=("$override")
-  if is_wsl && [ -f "$wsl" ]; then inputs+=("$wsl"); fi
   local merge_prog='def m($a;$b):
     if   ($a|type)=="object" and ($b|type)=="object"
     then reduce ($b|keys_unsorted[]) as $k ($a; .[$k] = m(.[$k]; $b[$k]))

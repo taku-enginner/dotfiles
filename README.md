@@ -63,14 +63,14 @@ git clone https://github.com/taku-enginner/dotfiles.git && \
 | ソース | 役割 |
 | --- | --- |
 | `~/claude`(会社 baseline / 別リポ) | upstream ミラー。**読取専用・一切書き込まない**。CLAUDE.md・settings.json・skills・hooks・memory・statusline.py の baseline |
-| `dotfiles/claude/`(本リポ) | 個人設定。`CLAUDE.override.md`・`settings.override.json`・`settings.wsl.json`(WSL トースト) |
+| `dotfiles/claude/`(本リポ) | 個人設定。`CLAUDE.override.md`・`settings.override.json` |
 | `~/work/moovibe/skills`(任意) | 業務スキル。あれば個別 link |
 | `~/personal-context/.claude/commands`(別リポ) | スラッシュコマンド。whole-dir symlink |
 
 `setup.sh` の組み立て(`setup_claude`):
 
 - **CLAUDE.md**: baseline ＋ `CLAUDE.override.md` を連結して**実ファイル生成**(symlink にすると personal-context の SessionStart フックが baseline 本体を汚染するため)
-- **settings.json**: baseline ⊕ `settings.override.json`(⊕ WSL 時 `settings.wsl.json`)を `jq` で**合成生成**(配列=結合／オブジェクト=deep merge／スカラー=後勝ち)。`settings.local.json` は user レベルでは読まれないため生成しない
+- **settings.json**: baseline ⊕ `settings.override.json` を `jq` で**合成生成**(配列=結合／オブジェクト=deep merge／スカラー=後勝ち)。`settings.local.json` は user レベルでは読まれないため生成しない
 - **skills / hooks**: `~/.claude/{skills,hooks}` を**実ディレクトリ**にし、baseline と個人の両ソースから**個別 symlink**(丸ごと symlink しない＝どのリポの作業ツリーも汚さない)。herdr 管理 hook は herdr に委ねる
 - **commands**: personal-context を whole-dir symlink
 
