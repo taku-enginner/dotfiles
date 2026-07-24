@@ -40,7 +40,6 @@ fi
 [[ ! -e $DOTFILES_DIR/.zshrc.prompt ]] && cp $DOTFILES_DIR/.zshrc.prompt_template $DOTFILES_DIR/.zshrc.prompt
 [[ -e $DOTFILES_DIR/.zshrc.prompt ]] && source $DOTFILES_DIR/.zshrc.prompt
 
-alias tm='tmux'
 alias dc='docker compose'
 alias dp='docker ps'
 alias ds='docker stop'
