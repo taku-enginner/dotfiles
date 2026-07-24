@@ -1,7 +1,9 @@
 [tools]
 delta = "latest"
 fzf = "latest"
+"github:RivoLink/leaf" = "latest"
 herdr = "latest"
+lazygit = "latest"
 mysql = "latest"
 neovim = "latest"
 node = "lts"
