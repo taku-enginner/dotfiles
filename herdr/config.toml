@@ -6,7 +6,7 @@ prefix           = "ctrl+space"
 next_tab         = "prefix+ctrl+n"
 previous_tab     = "prefix+ctrl+p"
 new_tab          = ["prefix+c", "prefix+ctrl+c"]   # bind c と bind C-c の両対応
-split_vertical   = "prefix+|"      # 左右（| は環境依存で不安定なため v を使用）
+split_vertical   = "prefix+v"      # 左右（| は herdr の受理記号外なので v を使用）
 split_horizontal = "prefix+minus"  # 上下（tmux の bind - と一致・herdr 既定と同じ）
 
 [ui.toast]

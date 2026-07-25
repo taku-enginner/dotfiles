@@ -87,6 +87,10 @@ create_symlink "$DOTFILES_DIR/sheldon" "$XDG_CONFIG_HOME/sheldon"
 create_symlink "$DOTFILES_DIR/nvim"    "$XDG_CONFIG_HOME/nvim"
 create_symlink "$DOTFILES_DIR/mise"    "$XDG_CONFIG_HOME/mise"
 create_symlink "$DOTFILES_DIR/.zshrc"  "$HOME/.zshrc"
+# herdr: log/socket/session.json を herdr 自身が同ディレクトリに置くため、
+# ディレクトリ丸ごとではなく config.toml 単体をリンクする(親は先に mkdir)。
+mkdir -p "$XDG_CONFIG_HOME/herdr"
+create_symlink "$DOTFILES_DIR/herdr/config.toml" "$XDG_CONFIG_HOME/herdr/config.toml"
 
 # ============================================================
 # Claude Code 設定の組み立て(baseline=~/claude 読取専用 ⊕ 個人=dotfiles/claude)
@@ -318,16 +322,34 @@ fi
 
 # --- hw(highway: 高速 grep)を未導入なら clone + build する ---
 # 以前は .zshrc がシェル起動ごとに build していたが、起動を遅くするため setup.sh へ移設。
+# build.sh は autotools チェーン(aclocal/autoconf/autoheader/automake → configure → make)。
+# 依存が欠けると先頭の aclocal で即死するため、ビルド前に検査して導入コマンドを名指しする。
 if ! command -v hw >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/hw" ]; then
   if confirm_exe "hw(highway) を clone してビルドしますか?"; then
-    hw_dir="$HOME/local/tmp/highway"
-    mkdir -p "$(dirname "$hw_dir")"
-    [ -d "$hw_dir/.git" ] || git clone https://github.com/tkengo/highway.git "$hw_dir" ||
-      echo "警告: highway の clone に失敗。" >&2
-    if [ -d "$hw_dir" ]; then
-      (cd "$hw_dir" && ./tools/build.sh) && mv "$hw_dir/hw" "$HOME/.local/bin/" &&
-        echo "hw を導入しました: $HOME/.local/bin/hw" ||
-        echo "警告: hw のビルドに失敗。" >&2
+    hw_missing=()
+    for tool in aclocal automake autoconf autoheader make cc; do
+      command -v "$tool" >/dev/null 2>&1 || hw_missing+=("$tool")
+    done
+    if [ ${#hw_missing[@]} -gt 0 ]; then
+      echo "hw のビルドに必要なツールが不足しています: ${hw_missing[*]}" >&2
+      case "$(uname -s)" in
+        Darwin) echo "  → 導入: brew install automake autoconf gperftools" >&2 ;;
+        Linux)  echo "  → 導入(Debian/Ubuntu 系): sudo apt-get install -y automake autoconf make gcc libgoogle-perftools-dev" >&2 ;;
+        *)      echo "  → automake / autoconf / make / C コンパイラ を導入してください" >&2 ;;
+      esac
+      echo "  導入後に setup.sh を再実行してください(hw 以外の設定は継続します)。" >&2
+    else
+      hw_dir="$HOME/local/tmp/highway"
+      mkdir -p "$(dirname "$hw_dir")"
+      [ -d "$hw_dir/.git" ] || git clone https://github.com/tkengo/highway.git "$hw_dir" ||
+        echo "警告: highway の clone に失敗。" >&2
+      if [ -d "$hw_dir" ]; then
+        if (cd "$hw_dir" && ./tools/build.sh) && mv "$hw_dir/hw" "$HOME/.local/bin/"; then
+          echo "hw を導入しました: $HOME/.local/bin/hw"
+        else
+          echo "警告: hw のビルドに失敗。直上の aclocal/configure/make の出力を確認してください。" >&2
+        fi
+      fi
     fi
   fi
 fi

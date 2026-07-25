@@ -4,6 +4,7 @@ AuthKey_H8W9N4DNG2.p8
 resize-pane
 .zcompdump*
 nvim/lazy-lock.json
+mise.toml
 
 # herdr のランタイム生成物(ログ・セッション状態・ロック)
 herdr/*.log
