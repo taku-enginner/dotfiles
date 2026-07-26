@@ -84,7 +84,7 @@ alias ga='git add'
 alias gb='git branch'
 alias gc='git commit'
 alias gd='git diff'
-alias gs='git status'
+alias gs='git status --short --branch'
 alias gps='git push'
 alias gpl='git pull'
 alias gl='git log --oneline'
@@ -96,10 +96,15 @@ alias env='env | sort'
 alias ccsession='~/utils/ccsession/ccsession'
 alias vi_edits='vi $(git status -s | awk "{print \$2}")'
 alias moove='AWS_PROFILE=moove'
+alias leaf='leaf --watch'
 
 # ── ツール初期化 ──
 eval "$(sheldon source)"
 eval "$(mise activate zsh)"
+if type fzf >/dev/null 2>&1; then
+  source <(fzf --zsh)
+  export FZF_CTRL_R_OPTS='--prompt="History > "'
+fi
 export NVM_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"                   # nvm 本体
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" # nvm 補完
@@ -116,7 +121,7 @@ else
 fi
 
 # ── 関数 ──
-# 関数定義(vi_edit / fhistory / fssm / frds 等)は別ファイルに分離(compinit 後に source)
+# 関数定義(vi_edit / fssm / frds 等)は別ファイルに分離(compinit 後に source)
 [ -f "$DOTFILES_DIR/zsh/functions.zsh" ] && source "$DOTFILES_DIR/zsh/functions.zsh"
 
 # ── マシン固有 ──

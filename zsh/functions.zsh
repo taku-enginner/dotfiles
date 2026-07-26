@@ -7,15 +7,6 @@ vi_edit() {
   gs | grep '^[ M]' | awk '{print $2}' | xargs nvim
 }
 
-# fzf でコマンド履歴をインクリメンタル検索(Ctrl-R)
-function fhistory() {
-  BUFFER=$(history -n -r 1 | fzf --reverse --no-sort +m --query "$LBUFFER" --prompt="History > ")
-  CURSOR=$#BUFFER
-  zle reset-prompt
-}
-zle -N fhistory
-bindkey '^r' fhistory
-
 # === AWS 汎用ツール(会社非依存) ===
 
 # fssm: fzf で実行中の EC2 / ECS を選んで SSM 接続する

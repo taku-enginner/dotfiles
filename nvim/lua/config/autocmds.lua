@@ -54,6 +54,18 @@ vim.api.nvim_create_autocmd({ "FocusGained", "BufEnter", "CursorHold", "CursorHo
   command = "checktime",
 })
 
+-- .md ファイルはインサートモードを抜けた時に自動保存
+vim.api.nvim_create_autocmd("InsertLeave", {
+  pattern = "*.md",
+  callback = function()
+    -- 変更があり、通常の実ファイルバッファのときだけ保存
+    if vim.bo.modified and vim.bo.modifiable
+      and vim.bo.buftype == "" and vim.fn.expand("%") ~= "" then
+      vim.cmd("silent! write")
+    end
+  end,
+})
+
 -- リロードが起きたことを通知(nvim-notify があればそちらに表示される)
 vim.api.nvim_create_autocmd("FileChangedShellPost", {
   pattern = "*",
