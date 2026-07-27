@@ -31,8 +31,10 @@ require("lazy").setup({
   },
   -- colorscheme that will be used when installing plugins.
   install = { colorscheme = { "tokyonight" } },
-  -- automatically check for plugin updates
-  checker = { enabled = true },
+  -- 更新チェックは行うが起動時に通知しない（更新有無は :Lazy で確認）
+  checker = { enabled = true, notify = false },
+  -- 設定変更時の自動リロードは残し、通知だけ止める
+  change_detection = { notify = false },
   git = {
     timeout = 600,
   }

@@ -9,3 +9,6 @@ neovim = "latest"
 node = "lts"
 python = "latest"
 terraform = "latest"
+
+[settings]
+experimental = true
