@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# $EDITOR ラッパ: herdr のペイン内なら右に新ペインを開いてそこで nvim を起動し、
+# 閉じるまでブロックする。Claude Code の Ctrl-G(外部エディタ)を
+# 「左=Claude Code / 右=nvim」の分割で使うためのもの。
+# herdr 外(素の端末・tmux 等)ではラップせず nvim をそのまま全画面で起動する。
+#
+#   EDITOR_CMD  起動するエディタ     (既定: nvim)
+#   SPLIT_RATIO 右ペインが占める割合 (既定: 0.5)
+set -uo pipefail
+
+editor=${EDITOR_CMD:-nvim}
+ratio=${SPLIT_RATIO:-0.5}
+
+# herdr 外 / herdr CLI 不在なら従来どおり全画面で起動する
+if [ -z "${HERDR_PANE_ID:-}" ] || ! command -v herdr >/dev/null 2>&1; then
+  exec "$editor" "$@"
+fi
+
+# 右に分割。ペイン ID が取れなければ(API エラー等)全画面へフォールバックする
+pane=$(herdr pane split "$HERDR_PANE_ID" --direction right --ratio "$ratio" --focus 2>/dev/null \
+  | sed -n 's/.*"pane_id":"\([^"]*\)".*/\1/p')
+[ -n "$pane" ] || exec "$editor" "$@"
+
+# 新ペインは別プロセスなので終了コードはファイル経由で受け取る
+# (nvim を :cq で抜けたとき Claude 側の「編集を破棄」が効くように終了コードを保つ)
+done_file="${TMPDIR:-/tmp}/nvim-split.$$.done"
+trap 'rm -f "$done_file"' EXIT
+
+# 引数(空白入りパスや +行番号)が壊れないようクォートして 1 行のコマンドにする
+cmd=$(printf '%q ' "$editor" "$@")
+herdr pane run "$pane" "$cmd; printf %s \$? > $(printf '%q' "$done_file"); exit"
+
+# nvim 終了(= done_file 出現)まで待つ。ペインを手動で閉じられた場合に
+# 永久待ちしないよう、10 回に 1 回はペインの生存も確認する
+i=0
+while [ ! -e "$done_file" ]; do
+  sleep 0.15
+  i=$((i + 1))
+  if [ $((i % 10)) -eq 0 ] && ! herdr pane get "$pane" >/dev/null 2>&1; then
+    break
+  fi
+done
+
+status=0
+[ -e "$done_file" ] && read -r status < "$done_file"
+exit "${status:-0}"

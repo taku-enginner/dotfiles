@@ -9,6 +9,15 @@ new_tab          = ["prefix+c", "prefix+ctrl+c"]   # bind c と bind C-c の両�
 split_vertical   = ["prefix+|", "prefix+v"]   # 左右（tmux の bind | ／ v の両対応）
 split_horizontal = "prefix+minus"  # 上下（tmux の bind - と一致・herdr 既定と同じ）
 
+# prefix+i: Claude Code のペインの右隣に、プロンプト下書き用の nvim ペインを開く。
+# Claude の Ctrl-G は外部エディタ起動時に claude 自身が画面をクリアするため会話が見えない。
+# こちらは Claude を生かしたまま分割するので、左=会話 / 右=nvim で書ける。
+# 書いた本文は nvim 側の <leader>cc(:CcSend)で Claude の入力欄へ送る。
+[[keys.command]]
+key     = "prefix+i"
+type    = "shell"        # detached 実行。cc-compose は herdr API を叩くだけで TTY を持たない
+command = "cc-compose"   # ~/.local/bin(setup.sh が symlink・herdr server の PATH に含まれる)
+
 [ui.toast]
 delivery      = "terminal"
 delay_seconds = 0

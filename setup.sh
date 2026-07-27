@@ -87,6 +87,8 @@ create_symlink "$DOTFILES_DIR/sheldon" "$XDG_CONFIG_HOME/sheldon"
 create_symlink "$DOTFILES_DIR/nvim"    "$XDG_CONFIG_HOME/nvim"
 create_symlink "$DOTFILES_DIR/mise"    "$XDG_CONFIG_HOME/mise"
 create_symlink "$DOTFILES_DIR/.zshrc"  "$HOME/.zshrc"
+# bin/ 配下のスクリプトは PATH の通った ~/.local/bin へ個別リンク
+create_symlink "$DOTFILES_DIR/bin/cc-compose" "$HOME/.local/bin/cc-compose"
 # herdr: log/socket/session.json を herdr 自身が同ディレクトリに置くため、
 # ディレクトリ丸ごとではなく config.toml 単体をリンクする(親は先に mkdir)。
 mkdir -p "$XDG_CONFIG_HOME/herdr"

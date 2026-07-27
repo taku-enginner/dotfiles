@@ -9,6 +9,7 @@
 - [setup.sh の動作](#setupsh-の動作)
 - [管理対象](#管理対象)
 - [Claude Code 設定](#claude-code-設定)
+- [プロンプト下書きペイン(herdr)](#プロンプト下書きペインherdr)
 - [private リポジトリ](#private-リポジトリ)
 
 ## 構成
@@ -53,6 +54,8 @@ git clone https://github.com/taku-enginner/dotfiles.git && \
 | --- | --- |
 | `git` `sheldon` `nvim` `mise` | `$XDG_CONFIG_HOME/<同名>` |
 | `.zshrc` | `~/.zshrc` |
+| `herdr/config.toml` | `$XDG_CONFIG_HOME/herdr/config.toml` |
+| `bin/cc-compose` | `~/.local/bin/cc-compose` |
 
 その他: `~/.zshenv`(XDG の選択を保存)、`~/dotfiles-private/zshrc.private`(`.zshrc` から source)。
 
@@ -75,6 +78,28 @@ git clone https://github.com/taku-enginner/dotfiles.git && \
 - **commands**: personal-context を whole-dir symlink
 
 `~/claude/setup.sh` は実行しない(本 `setup.sh` が組み立てを全部担う)。会社 baseline を更新するときは `~/claude` で `git pull` するだけ。
+
+## プロンプト下書きペイン(herdr)
+
+Claude Code の会話を見ながら nvim でプロンプトを書くための構成。左=Claude Code / 右=nvim の分割で使う。
+
+Claude Code の Ctrl-G(外部エディタ)は**使わない**。claude 自身が外部エディタ起動時に画面をクリアするため、ペインを分割しても左半分が空白になり会話が見えない。代わりに claude を生かしたまま隣に nvim ペインを開き、書いた本文を herdr 経由で claude の入力欄へ送る。
+
+| 操作 | 動作 |
+| --- | --- |
+| `prefix+i`(herdr) | claude ペインの右に nvim の下書きペインを開く(`cc-compose`)。既に開いていればフォーカスのみ |
+| `<leader>cc`(nvim) | バッファ(または選択範囲)を claude の入力欄へ入れる。送信はしない |
+| `<leader>cs`(nvim) | 入れたうえで送信(`chat:submit` = `ctrl+f` を送る) |
+| `:CcTarget`(nvim) | 送信先の確認。`:CcTarget wE:pJ` で固定、`:CcTarget clear` で解除 |
+| `:q`(nvim) | 下書きペインを閉じる |
+
+操作を忘れたら `cc-compose --help`(チートシート)。下書きバッファの winbar にも送信先と主要キーを常時表示する(`→wE:pJ  SPC cc 入力 / SPC cs 送信 / :q 閉じる`、幅が狭いときは送信先のみ)。
+
+- 下書きは `$TMPDIR/cc-prompt-<tab_id>.md` にタブ単位で残る(ペインを閉じても消えない)
+- 送信するとどのペインに入れたかを通知する(`→wE:pJ 3行 ~/work/...`)
+- 送信先の決定順: ① `:CcTarget` の固定 ② `cc-compose` が渡した分割元(`CC_TARGET_PANE`) ③ レイアウト座標で「自分の左にあって縦に重なる最も近い Claude ペイン」。同じタブに Claude が複数あっても③まで決定的に選ぶ
+- 実装: `bin/cc-compose`(ペイン分割)、`nvim/lua/config/herdr.lua`(`:CcSend` / `:CcSubmit`)
+- 送信キーを変えるときは `claude/keybindings.json` と `nvim/lua/config/herdr.lua` の `SUBMIT_KEY` を揃える
 
 ## private リポジトリ
 

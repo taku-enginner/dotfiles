@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Claude Code のペインの右隣に「プロンプト下書き用の nvim ペイン」を開く。
+# Claude Code 側は生きたままなので(Ctrl-G は claude 自身が画面をクリアするため会話が消える)、
+# 左=Claude Code / 右=nvim で会話を見ながらプロンプトを書ける。
+# 書いた本文は nvim 側の <leader>cc(:CcSend)で Claude の入力欄へ送る。
+#
+# 対象ペインは `herdr pane current`(自ペイン → 無ければフォーカス中)。
+# herdr の [[keys.command]] type="shell" から env 無しで呼ばれても同じ経路で解決する。
+#
+#   SPLIT_RATIO 右ペインが占める割合 (既定: 0.5)
+set -euo pipefail
+
+COMPOSE_LABEL=compose   # 下書きペインの目印(連打時の作り直し防止に使う)
+
+# 操作を忘れたとき用のチートシート(`cc-compose --help`)
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  cat <<'USAGE'
+cc-compose — Claude Code の右隣にプロンプト下書き用の nvim ペインを開く
+
+  Ctrl-Space i   下書きペインを開く / 既にあればフォーカス(herdr の prefix+i)
+  SPC cc         nvim: 本文を Claude の入力欄へ入れる(送信しない)
+  SPC cs         nvim: 入れたうえで送信する
+  :CcTarget      nvim: 送信先の確認 / `:CcTarget wE:pJ` で固定 / `clear` で解除
+  :q             nvim: 下書きペインを閉じる(下書きは残る)
+
+送信先は nvim の winbar に常時表示される(→wE:pJ)。
+下書きは $TMPDIR/cc-prompt-<tab_id>.md にタブ単位で残る。
+ペイン幅は SPLIT_RATIO=0.4 のように指定できる(既定 0.5)。
+USAGE
+  exit 0
+fi
+
+if ! command -v herdr >/dev/null 2>&1; then
+  echo "cc-compose: herdr が見つからない" >&2
+  exit 1
+fi
+
+# 単一オブジェクトの JSON から文字列フィールドを取り出す
+json_field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"; }
+
+pane_json=$(herdr pane current 2>/dev/null || true)
+pane=$(printf '%s' "$pane_json" | json_field pane_id)
+tab=$(printf '%s' "$pane_json" | json_field tab_id)
+if [ -z "$pane" ]; then
+  echo "cc-compose: herdr のペインを特定できない" >&2
+  exit 1
+fi
+
+# 下書きペイン自身から呼ばれたら何もしない(入れ子で nvim を開かない)
+if printf '%s' "$pane_json" | grep -q "\"label\":\"$COMPOSE_LABEL\""; then
+  exit 0
+fi
+
+# すでに右隣が下書きペインなら開き直さずフォーカスするだけ(連打でペインが増えない)
+# neighbor はラベルを返さないため、ペイン ID を取り直して pane get で確認する
+right=$(herdr pane neighbor --direction right --pane "$pane" 2>/dev/null | json_field neighbor_pane_id || true)
+if [ -n "$right" ] && herdr pane get "$right" 2>/dev/null | grep -q "\"label\":\"$COMPOSE_LABEL\""; then
+  herdr pane focus --direction right --pane "$pane" >/dev/null
+  exit 0
+fi
+
+# 下書きはタブ単位で使い回す(ペインを閉じても内容が残る)
+draft="${TMPDIR:-/tmp}/cc-prompt-${tab:-$pane}.md"
+draft=${draft//:/_}
+# 既存の下書きは touch しない(mtime が変わると開いている nvim が再読み込み警告を出す)
+if [ ! -e "$draft" ]; then
+  : > "$draft" || { echo "cc-compose: $draft を作れない" >&2; exit 1; }
+fi
+
+# 分割元を CC_TARGET_PANE で渡す。nvim 側はこれを送信先にするので、
+# 同じタブに Claude Code のペインが複数あっても推測せずに済む(:CcTarget で上書き可)
+new=$(herdr pane split "$pane" --direction right --ratio "${SPLIT_RATIO:-0.5}" \
+  --env "CC_TARGET_PANE=$pane" --focus 2>/dev/null \
+  | json_field pane_id || true)
+if [ -z "$new" ]; then
+  echo "cc-compose: ペイン分割に失敗した" >&2
+  exit 1
+fi
+
+herdr pane rename "$new" "$COMPOSE_LABEL" >/dev/null 2>&1 || true
+# nvim を終了したらペインも閉じる
+herdr pane run "$new" "nvim $(printf '%q' "$draft"); exit"

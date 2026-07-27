@@ -43,3 +43,6 @@ require("lazy").setup({
 -- キーマップ・autocmd（プラグイン読み込み後に適用）
 require("config.keymaps")
 require("config.autocmds")
+
+-- herdr 連携（Claude Code のペインへプロンプトを送る。herdr 外では何も起きない）
+require("config.herdr")
