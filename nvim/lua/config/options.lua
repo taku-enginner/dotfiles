@@ -9,6 +9,9 @@ vim.opt.fileencodings = 'ucs-bom,utf-8,euc-jp,sjis,latin1'
 
 vim.opt.swapfile = false
 
+-- 外部で変更されたファイルを自動で読み直す(下の checktime autocmd と併用。旧 vim-autoread の代替)
+vim.opt.autoread = true
+
 vim.opt.number = true
 vim.opt.cursorline = true
 vim.opt.signcolumn = "yes"

@@ -1,0 +1,58 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "~/personal-context/.claude/statusline.py"
+  },
+  "skillOverrides": {
+    "init": "off",
+    "review": "off",
+    "run": "off",
+    "security-review": "off",
+    "simplify": "off",
+    "verify": "off"
+  },
+  "enabledPlugins": {
+    "vercel@claude-plugins-official": true,
+    "crit@crit": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
+    },
+    "crit": {
+      "source": {
+        "source": "github",
+        "repo": "tomasz-tomczyk/crit"
+      }
+    }
+  },
+  "tui": "fullscreen",
+  "preferredNotifChannel": "terminal_bell",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/home/tak/.claude/hooks/herdr-agent-state.sh' session",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(/usr/bin/time -f '%es' zsh -i -c exit)"
+    ],
+    "deny": [
+      "Edit(**/.env*)",
+      "Edit(**/credentials*)",
+      "Edit(**/secrets/**)"
+    ]
+  }
+}
