@@ -10,3 +10,8 @@ mise.toml
 herdr/*.log
 herdr/session.json
 herdr/.plugins.lock
+# herdr プラグイン: 実体(git checkout + ビルド成果物)とレジストリは herdr が管理する。
+# plugins/config/ 配下のユーザ設定はリモートのホスト名・IP を含むため、
+# 公開リポジトリであるここでは追跡しない。
+herdr/plugins.json
+herdr/plugins/

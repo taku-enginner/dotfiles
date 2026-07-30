@@ -89,10 +89,11 @@ create_symlink "$DOTFILES_DIR/mise"    "$XDG_CONFIG_HOME/mise"
 create_symlink "$DOTFILES_DIR/.zshrc"  "$HOME/.zshrc"
 # bin/ 配下のスクリプトは PATH の通った ~/.local/bin へ個別リンク
 create_symlink "$DOTFILES_DIR/bin/cc-compose" "$HOME/.local/bin/cc-compose"
-# herdr: log/socket/session.json を herdr 自身が同ディレクトリに置くため、
-# ディレクトリ丸ごとではなく config.toml 単体をリンクする(親は先に mkdir)。
-mkdir -p "$XDG_CONFIG_HOME/herdr"
-create_symlink "$DOTFILES_DIR/herdr/config.toml" "$XDG_CONFIG_HOME/herdr/config.toml"
+create_symlink "$DOTFILES_DIR/bin/herdr-keys" "$HOME/.local/bin/herdr-keys"
+# herdr: $XDG_CONFIG_HOME/herdr をディレクトリごとリンクする。
+# log/socket/session.json は herdr 自身が同ディレクトリに置くため .gitignore で除外済み。
+# config.toml 単体をここでリンクしてはいけない(リンク元とリンク先が同一パスになり自己参照で壊れる)。
+create_symlink "$DOTFILES_DIR/herdr" "$XDG_CONFIG_HOME/herdr"
 
 # ============================================================
 # Claude Code 設定の組み立て(baseline=~/claude 読取専用 ⊕ 個人=dotfiles/claude)

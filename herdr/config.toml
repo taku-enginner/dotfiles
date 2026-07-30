@@ -3,11 +3,15 @@ onboarding = false
 
 [keys]
 prefix           = "ctrl+space"
+help             = ""              # ネイティブ help を無効化し、prefix+? を下の popup 一覧に譲る
 next_tab         = "prefix+ctrl+n"
 previous_tab     = "prefix+ctrl+p"
-new_tab          = ["prefix+c", "prefix+ctrl+c"]   # bind c と bind C-c の両対応
-split_vertical   = ["prefix+|", "prefix+v"]   # 左右（tmux の bind | ／ v の両対応）
-split_horizontal = "prefix+minus"  # 上下（tmux の bind - と一致・herdr 既定と同じ）
+# 新規タブ・分割は下の [[keys.command]] で mirror のリモート版に割り当てている。
+# ミラー外では herdr のローカル動作に degrade するので、体感は今までと同じ。
+# ここに残すのは「ミラー内でも明示的にローカルへ作りたい」時の退避キー(プラグイン無効時の保険も兼ねる)。
+new_tab          = "prefix+ctrl+c"       # ローカルタブ(tmux の bind C-c 相当・従来どおり)
+split_vertical   = "prefix+shift+v"      # ローカル左右分割
+split_horizontal = "prefix+shift+minus"  # ローカル上下分割
 
 # prefix+i: Claude Code のペインの右隣に、プロンプト下書き用の nvim ペインを開く。
 # Claude の Ctrl-G は外部エディタ起動時に claude 自身が画面をクリアするため会話が見えない。
@@ -17,6 +21,71 @@ split_horizontal = "prefix+minus"  # 上下（tmux の bind - と一致・herdr 
 key     = "prefix+i"
 type    = "shell"        # detached 実行。cc-compose は herdr API を叩くだけで TTY を持たない
 command = "cc-compose"   # ~/.local/bin(setup.sh が symlink・herdr server の PATH に含まれる)
+
+# herdr-mirror(plugin id: mirror): リモート herdr の workspace/agent を
+# ローカルのサイドバーにミラーする。対象ホストは
+# ~/.config/herdr/plugins/config/mirror/hosts.toml で定義(このリポジトリは公開なので追跡しない)。
+# workspace.focused イベントで自動起動するため通常は start を打つ必要はない。
+# 既定キーと衝突しないものを選択(既定の settings=prefix+s / close_workspace=prefix+shift+d とは別キー)。
+[[keys.command]]
+key     = "prefix+shift+m"
+type    = "plugin_action"
+command = "mirror.start"          # daemon 起動 / 再開
+
+[[keys.command]]
+key     = "prefix+shift+s"
+type    = "plugin_action"
+command = "mirror.pause"          # 同期停止(ミラーは残る)
+
+[[keys.command]]
+key     = "prefix+alt+d"
+type    = "plugin_action"
+command = "mirror.teardown"       # daemon 停止 + ミラー全消し
+
+[[keys.command]]
+key     = "prefix+shift+b"
+type    = "plugin_action"
+command = "mirror.restore"        # ローカルで閉じたミラーを復帰(既定の toggle_sidebar=prefix+b とは別キー)
+
+# リモート側にオブジェクトを作る。ミラー外で呼ぶとローカルの同等動作に degrade するので
+# 誤爆しない。キーは「ネイティブキー + alt」で対応付ける(README 推奨)。
+[[keys.command]]
+key     = "prefix+alt+n"
+type    = "plugin_action"
+command = "mirror.remote-new-workspace"   # native new_workspace = prefix+shift+n
+
+# タブ作成・分割は tmux 慣習のキーをそのままリモート版に渡す。
+# ミラー内 → リモートに作られて数秒でミラーされる / ミラー外 → ローカルに作られる。
+# (ミラーワークスペース内の非ミラーペインで分割した場合だけはエラーになる。
+#  ミラーのレイアウトがリモートとズレるのを防ぐための仕様)
+[[keys.command]]
+key     = "prefix+c"
+type    = "plugin_action"
+command = "mirror.remote-new-tab"
+
+[[keys.command]]
+key     = "prefix+v"
+type    = "plugin_action"
+command = "mirror.remote-split-right"
+
+[[keys.command]]
+key     = "prefix+|"
+type    = "plugin_action"
+command = "mirror.remote-split-right"
+
+[[keys.command]]
+key     = "prefix+minus"
+type    = "plugin_action"
+command = "mirror.remote-split-down"
+
+# prefix+?: キーバインド一覧。ネイティブ help(同キー)はオーバーレイが狭くて読みにくいため、
+# 画面ほぼ全面の popup で herdr-keys(config.toml と --default-config から生成)を less で開く。
+[[keys.command]]
+key     = "prefix+?"
+type    = "popup"
+command = "herdr-keys"
+width   = "95%"
+height  = "90%"
 
 [ui.toast]
 delivery      = "terminal"

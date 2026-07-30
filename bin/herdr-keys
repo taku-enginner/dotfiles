@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# herdr に登録されているキーバインドを一覧表示する。
+# ネイティブの help(既定 prefix+?)はオーバーレイが狭くて読みにくいため、
+# [[keys.command]] type="popup" の広い窓から呼ぶ代替として使う。
+#
+# 一覧は手書きせず、常に実際の設定から生成する(ドリフト防止):
+#   1. ~/.config/herdr/config.toml の [keys]          … 自分の上書き
+#   2. 同 [[keys.command]]                            … カスタム / プラグイン割当
+#   3. herdr --default-config の [keys]               … 上書きしていない既定
+# 1 で上書きされた既定は 3 から除外する。
+#
+#   herdr-keys --no-pager   ページャを通さず素で出す
+set -euo pipefail
+
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/herdr/config.toml"
+
+if ! command -v herdr >/dev/null 2>&1; then
+  echo "herdr-keys: herdr が見つからない" >&2
+  exit 1
+fi
+if [ ! -r "$CONFIG" ]; then
+  echo "herdr-keys: 設定が読めない: $CONFIG" >&2
+  exit 1
+fi
+
+render() {
+  # $1=config.toml $2=既定設定のダンプ
+  awk '
+    function clean(v) {
+      sub(/[ \t]+#.*$/, "", v)            # 行末コメント
+      gsub(/^[ \t]+|[ \t]+$/, "", v)
+      gsub(/^\[|\]$/, "", v)              # 配列の括弧
+      gsub(/"/, "", v)
+      gsub(/[ \t]*,[ \t]*/, " / ", v)     # 配列は「A / B」表記に
+      return v
+    }
+    function put(dst, name, val) { printf "  %-25s %s\n", name, val }
+
+    # --- 1st file: 自分の config.toml ---
+    FNR == NR {
+      line = $0
+      if (line ~ /^[ \t]*\[\[keys\.command\]\]/) { flushcmd(); sec = "cmd"; next }
+      if (line ~ /^[ \t]*\[keys\]/)              { sec = "keys"; next }
+      if (line ~ /^[ \t]*\[/)                    { flushcmd(); sec = "other"; next }
+      if (line ~ /^[ \t]*#/ || line ~ /^[ \t]*$/) next
+      if (sec == "keys" && line ~ /=/) {
+        name = line; sub(/[ \t]*=.*$/, "", name); gsub(/[ \t]/, "", name)
+        val = line; sub(/^[^=]*=[ \t]*/, "", val)
+        own[name] = clean(val); oorder[++on] = name
+      }
+      if (sec == "cmd" && line ~ /=/) {
+        name = line; sub(/[ \t]*=.*$/, "", name); gsub(/[ \t]/, "", name)
+        val = line; sub(/^[^=]*=[ \t]*/, "", val); val = clean(val)
+        if (name == "key")     ck = val
+        if (name == "type")    ct = val
+        if (name == "command") cc = val
+      }
+      next
+    }
+
+    # --- 2nd file: herdr --default-config ---
+    {
+      line = $0
+      if (line ~ /^[ \t]*\[keys\]/)                  { dsec = 1; next }
+      if (line ~ /^[ \t]*#?[ \t]*\[\[keys\.command\]\]/) { dsec = 0; next }   # 設定例なので拾わない
+      if (line ~ /^[ \t]*#?[ \t]*\[keys\.indexed\]/)    { dsec = 0; next }
+      if (line !~ /^[ \t]*#/) { if (line ~ /^[ \t]*\[/) dsec = 0; next }
+      if (!dsec) next
+      body = line; sub(/^[ \t]*#[ \t]*/, "", body)
+      if (body !~ /^[a-z_]+[ \t]*=/) next
+      name = body; sub(/[ \t]*=.*$/, "", name); gsub(/[ \t]/, "", name)
+      val = body; sub(/^[^=]*=[ \t]*/, "", val); val = clean(val)
+      if (name in own) next                          # 上書き済みは既定側に出さない
+      if (name in def) next                          # 既出(コメント中の再掲)は無視
+      if (val == "") next                            # 既定で未割当のものは省く
+      if (val ~ /[ \t]/) next                        # 空白入りは解説文(例: type = "popup" opens ...)
+      def[name] = val; dorder[++dn] = name
+    }
+
+    function flushcmd() {
+      if (ck != "") { cmds[++cn] = ck "\t" ct "\t" cc; ck = ct = cc = "" }
+    }
+
+    END {
+      flushcmd()
+      pfx = ("prefix" in own) ? own["prefix"] : "ctrl+b(既定)"
+      printf "\n  herdr キーマップ   prefix = %s   (生成元: %s)\n\n", pfx, ARGV[1]
+
+      print "■ 自分の上書き  [keys]"
+      for (i = 1; i <= on; i++) {
+        v = own[oorder[i]]
+        put("", oorder[i], (v == "") ? "(無効化)" : v)
+      }
+
+      print ""
+      print "■ カスタムコマンド / プラグイン  [[keys.command]]"
+      for (i = 1; i <= cn; i++) {
+        split(cmds[i], f, "\t")
+        printf "  %-25s %-14s %s\n", f[1], f[2], f[3]
+      }
+
+      print ""
+      print "■ 既定のまま(上書きしていないもの)"
+      for (i = 1; i <= dn; i++) put("", dorder[i], def[dorder[i]])
+
+      print ""
+      print "  上書きした既定キーは無効になる(例: next_tab を prefix+ctrl+n にすると prefix+n は効かない)。"
+      print "  navigate_* は navigate モード(セッションナビゲータ)を開いている間だけ効くローカルキー。"
+      print "  プラグインアクションの説明は `herdr plugin action list`。q で閉じる。"
+      print ""
+    }
+  ' "$1" "$2"
+}
+
+DUMP="$(mktemp)"
+trap 'rm -f "$DUMP"' EXIT
+herdr --default-config >"$DUMP" 2>/dev/null
+
+if [ "${1:-}" = "--no-pager" ] || [ ! -t 1 ]; then
+  render "$CONFIG" "$DUMP"
+else
+  render "$CONFIG" "$DUMP" | less -R
+fi
