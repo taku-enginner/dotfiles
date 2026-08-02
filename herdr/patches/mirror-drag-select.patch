@@ -1,0 +1,517 @@
+diff --git a/src/grid.rs b/src/grid.rs
+index f68b16b..a6ee0c8 100644
+--- a/src/grid.rs
++++ b/src/grid.rs
+@@ -168,6 +168,88 @@ fn parse_osc(chars: &[char]) -> Option<usize> {
+     None
+ }
+ 
++// ---------------------------------------------------------------------------
++// drag selection
++
++/// A drag selection, in LOCAL screen coordinates (0-based row/col).
++///
++/// LOCAL PATCH. That coordinate space is deliberate: it is the same one
++/// `Renderer::paint`'s row loop uses and the same one SGR mouse reports arrive
++/// in, so highlighting and text extraction need no translation. The cost is
++/// that a selection is only meaningful while the screen underneath it holds
++/// still — the caller drops it when a frame rewrites the selected region.
++#[derive(Clone, Copy, PartialEq)]
++pub struct Selection {
++    pub anchor: (usize, usize),
++    pub head: (usize, usize),
++}
++
++impl Selection {
++    pub fn new(row: usize, col: usize) -> Selection {
++        Selection { anchor: (row, col), head: (row, col) }
++    }
++
++    /// a press with no drag: a plain click, nothing to copy
++    pub fn is_empty(&self) -> bool {
++        self.anchor == self.head
++    }
++
++    /// (top-left, bottom-right) — lexicographic on (row, col)
++    fn ordered(&self) -> ((usize, usize), (usize, usize)) {
++        if self.anchor <= self.head {
++            (self.anchor, self.head)
++        } else {
++            (self.head, self.anchor)
++        }
++    }
++
++    /// Inclusive column range selected on local row `r`, or None when the row
++    /// is outside the selection. Middle rows run to the right edge.
++    pub fn cols_on(&self, r: usize, out_cols: usize) -> Option<(usize, usize)> {
++        let ((sr, sc), (er, ec)) = self.ordered();
++        if r < sr || r > er || out_cols == 0 {
++            return None;
++        }
++        let last = out_cols - 1;
++        let from = if r == sr { sc } else { 0 };
++        let to = if r == er { ec } else { last };
++        (from <= last).then(|| (from, to.min(last)))
++    }
++}
++
++/// Row offset of the bottom-anchored window `Renderer::paint` draws. Shared so
++/// text extraction reads exactly the rows the user sees.
++pub fn offset_for(grid: &Grid, out_rows: usize) -> usize {
++    let bottom = grid.content_bottom.max(grid.cursor_row);
++    (bottom + 1).saturating_sub(out_rows)
++}
++
++/// Text under `sel`, read from the same window `paint` draws. Rows are trimmed
++/// at the right like [`Grid::text_lines`]; the last row gets no trailing
++/// newline. Wrapped remote lines cannot be rejoined — frames carry no wrap
++/// flags (see the module header) — so this is strictly what is on screen.
++pub fn selected_text(grid: &Grid, out_cols: usize, out_rows: usize, sel: &Selection) -> String {
++    let offset_r = offset_for(grid, out_rows);
++    let limit = out_cols.min(grid.width);
++    let empty = Vec::new();
++    let mut lines: Vec<String> = Vec::new();
++    for r in 0..out_rows {
++        let Some((from, to)) = sel.cols_on(r, limit) else { continue };
++        let cells = grid.rows.get(r + offset_r).unwrap_or(&empty);
++        let mut s = String::new();
++        let mut c = from;
++        while c <= to {
++            let cell = cells.get(c).and_then(|c| c.as_ref());
++            let ch = cell.map(|c| c.ch).unwrap_or(' ');
++            s.push(ch);
++            // a wide char owns the next column too: skip its spacer cell
++            c += cw(ch);
++        }
++        lines.push(s.trim_end().to_string());
++    }
++    lines.join("\n")
++}
++
+ // ---------------------------------------------------------------------------
+ // renderer: paints a window of the grid onto the local terminal
+ 
+@@ -193,9 +275,16 @@ impl Renderer {
+ 
+     /// Build the ANSI to paint the grid into an out_cols × out_rows terminal.
+     /// Bottom-anchored window: agent TUIs live at the bottom of the screen.
+-    pub fn paint(&mut self, grid: &Grid, out_cols: usize, out_rows: usize) -> String {
+-        let bottom = grid.content_bottom.max(grid.cursor_row);
+-        let offset_r = (bottom + 1).saturating_sub(out_rows);
++    ///
++    /// `sel` is painted as reverse video (LOCAL PATCH — drag selection).
++    pub fn paint(
++        &mut self,
++        grid: &Grid,
++        out_cols: usize,
++        out_rows: usize,
++        sel: Option<&Selection>,
++    ) -> String {
++        let offset_r = offset_for(grid, out_rows);
+         let mut out = String::from("\x1b[?2026h\x1b[?25l");
+         // paint every local row (missing rows blank-fill), or the pane stays
+         // blank before the first frame and the status row is unreachable
+@@ -209,14 +298,24 @@ impl Renderer {
+             let mut line = String::new();
+             let mut prev_sgr: Option<&str> = None;
+             let limit = out_cols.min(grid.width);
++            let sel_cols = sel.and_then(|s| s.cols_on(r, limit));
++            let mut reversed = false;
+             let mut c = 0usize;
+             while c < limit {
+                 let cell = cells.get(c).and_then(|c| c.as_ref());
+                 let sgr = cell.map(|c| &*c.sgr).unwrap_or("\x1b[0m");
+-                if prev_sgr != Some(sgr) {
++                let sgr_changed = prev_sgr != Some(sgr);
++                if sgr_changed {
+                     line.push_str(if sgr.is_empty() { "\x1b[0m" } else { sgr });
+                     prev_sgr = Some(sgr);
+                 }
++                // re-assert reverse video after any SGR run change: the run may
++                // have been a reset (\x1b[0m), which clears it
++                let want_rev = sel_cols.is_some_and(|(f, t)| c >= f && c <= t);
++                if want_rev != reversed || (sgr_changed && want_rev) {
++                    line.push_str(if want_rev { "\x1b[7m" } else { "\x1b[27m" });
++                    reversed = want_rev;
++                }
+                 let ch = cell.map(|c| c.ch).unwrap_or(' ');
+                 let w = cw(ch);
+                 // a wide char that would straddle the right edge is blanked
+@@ -305,7 +404,7 @@ mod tests {
+         g.apply("\x1b[1;1H한\x1b[1;3H글\x1b[1;5H!");
+         assert_eq!((g.cursor_row, g.cursor_col), (0, 5));
+         let mut r = Renderer::new();
+-        let out = r.paint(&g, 10, 1);
++        let out = r.paint(&g, 10, 1, None);
+         // without width handling this painted "한 글 !" and drifted right
+         assert!(out.contains("한글!"), "got: {out:?}");
+     }
+@@ -317,7 +416,7 @@ mod tests {
+         g.apply("\x1b[1;1Hab"); // narrow content first
+         g.apply("\x1b[1;1H한"); // delta frame paints a wide char over it
+         let mut r = Renderer::new();
+-        let out = r.paint(&g, 10, 1);
++        let out = r.paint(&g, 10, 1, None);
+         assert!(!out.contains('b'), "stale spacer cell survived: {out:?}");
+     }
+ 
+@@ -327,7 +426,7 @@ mod tests {
+         let g = Grid::new();
+         let mut r = Renderer::new();
+         r.status("reconnecting in 5s");
+-        let out = r.paint(&g, 80, 24);
++        let out = r.paint(&g, 80, 24, None);
+         assert!(out.contains("reconnecting in 5s"));
+     }
+ 
+@@ -337,14 +436,78 @@ mod tests {
+         g.resize(5, 10);
+         g.apply("\x1b[10;1Hlast"); // content at the bottom row of a tall grid
+         let mut r = Renderer::new();
+-        let out = r.paint(&g, 5, 3);
++        let out = r.paint(&g, 5, 3, None);
+         // window shows rows 8..10 → "last" lands on the visible last row
+         assert!(out.contains("last"));
+         r.status("HELLO");
+-        let out2 = r.paint(&g, 5, 3);
++        let out2 = r.paint(&g, 5, 3, None);
+         assert!(out2.contains("HELLO"));
+         // unchanged rows are not repainted
+-        let out3 = r.paint(&g, 5, 3);
++        let out3 = r.paint(&g, 5, 3, None);
+         assert!(!out3.contains("last"));
+     }
++
++    /// three rows of content, window exactly as tall (offset 0)
++    fn three_rows() -> Grid {
++        let mut g = Grid::new();
++        g.resize(10, 3);
++        g.apply("\x1b[1;1Habc\x1b[2;1Hdef\x1b[3;1Hghi");
++        g
++    }
++
++    #[test]
++    fn selection_spans_rows_and_trims_line_ends() {
++        let g = three_rows();
++        let sel = Selection { anchor: (0, 1), head: (2, 1) };
++        // first row from the anchor column, middle row whole, last row up to the
++        // head column — and no trailing blanks from the unwritten columns
++        assert_eq!(selected_text(&g, 10, 3, &sel), "bc\ndef\ngh");
++    }
++
++    #[test]
++    fn selection_normalizes_a_backwards_drag() {
++        let g = three_rows();
++        let up = Selection { anchor: (2, 1), head: (0, 1) };
++        assert_eq!(selected_text(&g, 10, 3, &up), "bc\ndef\ngh");
++    }
++
++    #[test]
++    fn selection_within_one_row_has_no_newline() {
++        let g = three_rows();
++        let sel = Selection { anchor: (1, 0), head: (1, 1) };
++        let text = selected_text(&g, 10, 3, &sel);
++        assert_eq!(text, "de");
++        assert!(!text.contains('\n'));
++    }
++
++    #[test]
++    fn selection_keeps_wide_chars_whole() {
++        let mut g = Grid::new();
++        g.resize(6, 1);
++        g.apply("\x1b[1;1Hあい");
++        // columns 0..3 cover both wide chars plus their spacer cells
++        let sel = Selection { anchor: (0, 0), head: (0, 3) };
++        assert_eq!(selected_text(&g, 6, 1, &sel), "あい");
++    }
++
++    #[test]
++    fn paint_marks_the_selection_reverse_video() {
++        let g = three_rows();
++        let mut r = Renderer::new();
++        let sel = Selection { anchor: (1, 0), head: (1, 1) };
++        let out = r.paint(&g, 10, 3, Some(&sel));
++        assert!(out.contains("\x1b[7m"), "no reverse video: {out:?}");
++        assert!(out.contains("\x1b[27m"), "reverse video never turned off: {out:?}");
++        // dropping the selection repaints the row without it
++        let plain = r.paint(&g, 10, 3, None);
++        assert!(plain.contains("def"));
++        assert!(!plain.contains("\x1b[7m"));
++    }
++
++    #[test]
++    fn selection_outside_the_grid_is_empty() {
++        let g = three_rows();
++        let sel = Selection { anchor: (9, 0), head: (9, 4) };
++        assert_eq!(selected_text(&g, 10, 3, &sel), "");
++    }
+ }
+diff --git a/src/pane.rs b/src/pane.rs
+index 8127593..454416c 100644
+--- a/src/pane.rs
++++ b/src/pane.rs
+@@ -38,7 +38,7 @@ use tokio::sync::mpsc;
+ use tokio::time::Instant;
+ 
+ use crate::util::{err, Result};
+-use crate::grid::{Grid, Renderer};
++use crate::grid::{Grid, Renderer, Selection};
+ use crate::predict::Predictor;
+ 
+ // ---------------------------------------------------------------------------
+@@ -374,20 +374,41 @@ fn parse_mouse(bytes: &[u8], at: usize) -> Option<(u32, u32, u32, bool, usize)>
+ enum MouseAction {
+     /// wheel: send as a semantic terminal.scroll (server decides app vs scrollback)
+     Scroll { up: bool },
+-    /// click/drag on a remote TUI: forward the raw SGR sequence
++    /// click/drag on a remote TUI: forward the SGR sequence (Alt stripped)
+     ForwardRaw,
+-    /// click/drag at a shell (or unclassified): drop, keep mouse local
++    /// plain left press/drag/release: local drag selection
++    Select,
++    /// middle/right at a shell (or unclassified): drop, so it can't garbage the prompt
+     Drop,
+ }
+ 
++/// SGR button-field bits.
++const MOUSE_ALT: u32 = 8;
++const MOUSE_MOTION: u32 = 32;
++/// button number lives in the low two bits; 0 = left
++const MOUSE_BUTTON: u32 = 3;
++/// 64 and up are the wheel/extra-button range
++const MOUSE_WHEEL: u32 = 64;
++
+ /// Wheel always scrolls semantically, regardless of the foreground
+ /// classification — the remote herdr server knows the real app's mouse mode
+ /// and is a better judge than this side's process-name heuristic (e.g. a TUI
+-/// that doesn't consume wheel events, like an agent CLI). Non-wheel
+-/// clicks/drags keep the existing foreground-based routing.
++/// that doesn't consume wheel events, like an agent CLI).
++///
++/// LOCAL PATCH — the plain left drag is a local selection everywhere, and Alt
++/// is the escape hatch that hands a gesture to the remote app instead. Upstream
++/// routed every click/drag by the foreground classification: forwarded to a
++/// TUI, dropped at a shell (so a mirror pane at a prompt could not select at
++/// all — the whole point of this patch). Middle and right keep the upstream
++/// routing, so nvim's middle-click paste still works and a shell prompt still
++/// never sees mouse garbage.
+ fn mouse_action(remote_is_shell: Option<bool>, btn: u32, press: bool) -> MouseAction {
+     if press && (btn == 64 || btn == 65) {
+         MouseAction::Scroll { up: btn == 64 }
++    } else if btn & MOUSE_ALT != 0 {
++        MouseAction::ForwardRaw
++    } else if btn < MOUSE_WHEEL && btn & MOUSE_BUTTON == 0 {
++        MouseAction::Select
+     } else if remote_is_shell == Some(false) {
+         MouseAction::ForwardRaw
+     } else {
+@@ -395,6 +416,12 @@ fn mouse_action(remote_is_shell: Option<bool>, btn: u32, press: bool) -> MouseAc
+     }
+ }
+ 
++/// Re-encode a parsed SGR mouse event with the Alt bit cleared, so the remote
++/// app sees the plain gesture the user made.
++fn sgr_without_alt(btn: u32, x: u32, y: u32, press: bool) -> String {
++    format!("\x1b[<{};{};{}{}", btn & !MOUSE_ALT, x, y, if press { 'M' } else { 'm' })
++}
++
+ fn contains_wheel_press(bytes: &[u8]) -> bool {
+     let mut i = 0;
+     while i < bytes.len() {
+@@ -462,6 +489,9 @@ struct App {
+     /// whether the local pane is currently in application cursor mode (?1h), held
+     /// to match the remote's so forwarded arrows arrive in the form it expects
+     app_cursor_keys: bool,
++    /// LOCAL PATCH — live drag selection, in local screen coordinates. Dropped
++    /// when a frame rewrites what is under it (see handle_frame).
++    sel: Option<Selection>,
+ }
+ 
+ /// minimum spacing between foreground polls — each is an ssh handshake, so we
+@@ -472,6 +502,11 @@ const FG_POLL_INTERVAL: Duration = Duration::from_millis(1500);
+ /// change the input caused (e.g. a TUI just exited); bypasses FG_POLL_INTERVAL
+ const SETTLE_DELAY: Duration = Duration::from_millis(350);
+ 
++/// LOCAL PATCH — cap on an OSC 52 copy payload (pre-base64 bytes). A full
++/// screen of a wide pane is ~40 KB; terminals silently drop an oversized write,
++/// so refuse loudly instead.
++const OSC52_MAX: usize = 100_000;
++
+ impl App {
+     fn paint(&mut self) {
+         if !self.tty {
+@@ -482,7 +517,7 @@ impl App {
+             self.renderer.invalidate();
+         }
+         let (cols, rows) = term_size();
+-        let mut out = self.renderer.paint(&self.grid, cols, rows);
++        let mut out = self.renderer.paint(&self.grid, cols, rows, self.sel.as_ref());
+         // inject the prediction overlay inside the synchronized-update block
+         let overlay = self.predict.overlay(&self.grid, cols, rows);
+         if !overlay.is_empty() {
+@@ -502,6 +537,44 @@ impl App {
+         self.hint_clear_at = Some(Instant::now() + Duration::from_millis(1500));
+     }
+ 
++    /// LOCAL PATCH — drive the local drag selection from one mouse event. SGR
++    /// coordinates are 1-based; the selection lives in the same 0-based local
++    /// screen space paint() draws in, so this is the only conversion needed.
++    fn handle_select(&mut self, btn: u32, x: u32, y: u32, press: bool) {
++        let (row, col) = (y.saturating_sub(1) as usize, x.saturating_sub(1) as usize);
++        if !press {
++            self.copy_selection();
++        } else if btn & MOUSE_MOTION != 0 {
++            if let Some(s) = self.sel.as_mut() {
++                s.head = (row, col);
++            }
++            self.paint();
++        } else {
++            self.sel = Some(Selection::new(row, col));
++            self.paint();
++        }
++    }
++
++    /// LOCAL PATCH — copy the highlighted text to the host clipboard with OSC 52
++    /// and drop the highlight. herdr passes a pane's OSC 52 through to the outer
++    /// terminal, so this needs no platform clipboard binary.
++    fn copy_selection(&mut self) {
++        let Some(sel) = self.sel.take() else { return };
++        let (cols, rows) = term_size();
++        let text = crate::grid::selected_text(&self.grid, cols, rows, &sel);
++        self.paint(); // repaint without the highlight
++        if sel.is_empty() || text.trim().is_empty() {
++            return; // a plain click, or blank screen area
++        }
++        if text.len() > OSC52_MAX {
++            self.hint(&format!("selection too large to copy ({} bytes)", text.len()));
++            return;
++        }
++        write_stdout(&format!("\x1b]52;c;{}\x07", B64.encode(text.as_bytes())));
++        let n = text.lines().count();
++        self.hint(&format!("copied {n} line{}", if n == 1 { "" } else { "s" }));
++    }
++
+     /// Kick a background poll of the remote pane's foreground process, throttled
+     /// so a mouse burst doesn't spawn an ssh per event. The result arrives as
+     /// Msg::Foreground and updates `remote_is_shell`.
+@@ -690,11 +763,25 @@ impl App {
+         if frame.full == Some(true) {
+             self.grid.clear();
+         }
++        // LOCAL PATCH — a selection is anchored to screen coordinates, so it only
++        // means something while the text under it holds still. Snapshot it and
++        // drop the selection if this frame rewrote that region (a busy pane
++        // elsewhere on screen leaves it alone).
++        let selected_before = self.sel.map(|s| {
++            let (c, r) = term_size();
++            crate::grid::selected_text(&self.grid, c, r, &s)
++        });
+         if let Ok(decoded) = B64.decode(bytes) {
+             self.grid.apply(&String::from_utf8_lossy(&decoded));
+             // reconcile predictive echo against the authoritative frame
+             self.predict.on_frame(&self.grid);
+         }
++        if let (Some(sel), Some(before)) = (self.sel, selected_before) {
++            let (c, r) = term_size();
++            if crate::grid::selected_text(&self.grid, c, r, &sel) != before {
++                self.sel = None;
++            }
++        }
+         if self.args.dump {
+             let lines: Vec<String> = self.grid.text_lines().into_iter().filter(|l| !l.is_empty()).collect();
+             println!(
+@@ -753,6 +840,22 @@ impl App {
+                     } else {
+                         self.hint("read-only — type to take control");
+                     }
++                    return;
++                }
++                // LOCAL PATCH — a drag selection is local and read-only, so it
++                // works while observing too: copying out of a read-only mirror
++                // must not steal the remote's lock. Upstream dropped every
++                // non-wheel mouse event here.
++                let mut i = 0usize;
++                while i < buf.len() {
++                    if let Some((btn, x, y, press, len)) = parse_mouse(&buf, i) {
++                        if mouse_action(self.remote_is_shell, btn, press) == MouseAction::Select {
++                            self.handle_select(btn, x, y, press);
++                        }
++                        i += len;
++                    } else {
++                        i += 1;
++                    }
+                 }
+                 return;
+             }
+@@ -811,7 +914,14 @@ impl App {
+                             "modifiers": 0,
+                         }));
+                     }
+-                    MouseAction::ForwardRaw => rest.extend_from_slice(&buf[i..i + len]),
++                    MouseAction::ForwardRaw => {
++                        if btn & MOUSE_ALT != 0 {
++                            rest.extend_from_slice(sgr_without_alt(btn, x, y, press).as_bytes());
++                        } else {
++                            rest.extend_from_slice(&buf[i..i + len]);
++                        }
++                    }
++                    MouseAction::Select => self.handle_select(btn, x, y, press),
+                     MouseAction::Drop => {}
+                 }
+                 i += len;
+@@ -895,6 +1005,7 @@ pub async fn run(args: Args) -> Result<()> {
+         // startup leaves the pane in normal cursor mode; the first classification
+         // moves it if the remote turns out to be a TUI
+         app_cursor_keys: false,
++        sel: None,
+     };
+     app.connect(if app.args.always_control { Mode::Control } else { Mode::Observe }).await;
+ 
+@@ -1015,10 +1126,43 @@ mod tests {
+         // unclassified/shell foreground: wheel still scrolls
+         assert_eq!(mouse_action(None, 64, true), MouseAction::Scroll { up: true });
+         assert_eq!(mouse_action(Some(true), 65, true), MouseAction::Scroll { up: false });
+-        // non-wheel clicks/drags keep the existing foreground-based routing
+-        assert_eq!(mouse_action(Some(false), 0, true), MouseAction::ForwardRaw); // TUI click
+-        assert_eq!(mouse_action(Some(true), 0, true), MouseAction::Drop); // shell click
+-        assert_eq!(mouse_action(None, 0, true), MouseAction::Drop); // unclassified click
++    }
++
++    #[test]
++    fn plain_left_drag_selects_in_every_pane() {
++        // LOCAL PATCH: the left button is the local selection, regardless of what
++        // the remote foreground is — upstream forwarded it to a TUI and dropped
++        // it at a shell, which left a mirror pane at a prompt unable to select
++        for fg in [Some(true), Some(false), None] {
++            assert_eq!(mouse_action(fg, 0, true), MouseAction::Select); // press
++            assert_eq!(mouse_action(fg, 32, true), MouseAction::Select); // drag
++            assert_eq!(mouse_action(fg, 0, false), MouseAction::Select); // release
++        }
++    }
++
++    #[test]
++    fn alt_hands_the_gesture_to_the_remote() {
++        // Alt+drag is the escape hatch for a remote app's own mouse (nvim), and
++        // the Alt bit is stripped so the app sees the plain gesture
++        for fg in [Some(true), Some(false), None] {
++            assert_eq!(mouse_action(fg, 8, true), MouseAction::ForwardRaw); // alt+press
++            assert_eq!(mouse_action(fg, 40, true), MouseAction::ForwardRaw); // alt+drag
++            assert_eq!(mouse_action(fg, 8, false), MouseAction::ForwardRaw); // alt+release
++        }
++        assert_eq!(sgr_without_alt(40, 12, 7, true), "\x1b[<32;12;7M");
++        assert_eq!(sgr_without_alt(8, 12, 7, false), "\x1b[<0;12;7m");
++        // a modifier we don't claim survives untouched
++        assert_eq!(sgr_without_alt(16, 1, 1, true), "\x1b[<16;1;1M");
++    }
++
++    #[test]
++    fn middle_and_right_keep_the_upstream_routing() {
++        // so nvim's middle-click paste still reaches the remote, and a shell
++        // prompt still never sees mouse garbage
++        assert_eq!(mouse_action(Some(false), 1, true), MouseAction::ForwardRaw); // TUI middle
++        assert_eq!(mouse_action(Some(false), 2, true), MouseAction::ForwardRaw); // TUI right
++        assert_eq!(mouse_action(Some(true), 1, true), MouseAction::Drop); // shell middle
++        assert_eq!(mouse_action(None, 2, true), MouseAction::Drop); // unclassified right
+     }
+ 
+     #[test]

@@ -1,0 +1,44 @@
+diff --git a/src/pane.rs b/src/pane.rs
+index cd73ea9..8127593 100644
+--- a/src/pane.rs
++++ b/src/pane.rs
+@@ -524,20 +524,31 @@ impl App {
+         });
+     }
+ 
+-    /// Match the local mouse grab to the classification: release it at a shell so
+-    /// herdr does native selection/scroll, keep it grabbed for a TUI (or while
+-    /// unknown) so clicks can be forwarded. Only writes on a change.
++    /// Hold the mouse grab unconditionally so the wheel always reaches us.
++    ///
++    /// LOCAL PATCH (upstream releases the grab at a shell so herdr can do native
++    /// selection/scroll). That release makes wheel scrolling impossible in a
++    /// mirror pane: the wrapper renders inside the alternate screen (?1049h), so
++    /// the hosting pane has no scrollback for herdr to scroll
++    /// (`pane.scroll.max_offset_from_bottom == 0`) and the wheel event dies
++    /// there instead of becoming a terminal.scroll on the remote. It is a
++    /// one-way trap too — with the grab released, mouse input never reaches this
++    /// process, so no wheel can ever trigger the re-poll that would take the
++    /// grab back (see handle_stdin). A pane split into a bare remote shell
++    /// prompt therefore loses wheel scrolling permanently.
++    ///
++    /// Keeping the grab leaks nothing into the remote prompt: mouse_action()
++    /// already drops clicks/drags while the foreground is a shell. The cost is
++    /// herdr's native drag-select inside mirror panes at a shell prompt.
+     fn sync_mouse_grab(&mut self) {
+         if !self.tty {
+             return;
+         }
+-        // grab unless we've confirmed the foreground is a shell
+-        let want = self.remote_is_shell != Some(true);
+-        if want == self.mouse_grabbed {
++        if self.mouse_grabbed {
+             return;
+         }
+-        self.mouse_grabbed = want;
+-        write_stdout(if want { "\x1b[?1002h\x1b[?1006h" } else { "\x1b[?1002l" });
++        self.mouse_grabbed = true;
++        write_stdout("\x1b[?1002h\x1b[?1006h");
+     }
+ 
+     /// Match the local pane's cursor-key mode to the remote's, so the arrow bytes

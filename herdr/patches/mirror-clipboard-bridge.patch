@@ -1,0 +1,183 @@
+diff --git a/src/pane.rs b/src/pane.rs
+index 454416c..d99057d 100644
+--- a/src/pane.rs
++++ b/src/pane.rs
+@@ -183,6 +183,8 @@ enum Msg {
+     /// result of a background foreground-process poll: Some(true)=shell,
+     /// Some(false)=TUI, None=poll failed (keep last value)
+     Foreground(Option<bool>),
++    /// LOCAL PATCH — one base64 line the remote appended to the clipboard bridge
++    Clip(String),
+ }
+ 
+ struct Session {
+@@ -492,6 +494,10 @@ struct App {
+     /// LOCAL PATCH — live drag selection, in local screen coordinates. Dropped
+     /// when a frame rewrites what is under it (see handle_frame).
+     sel: Option<Selection>,
++    /// LOCAL PATCH — pid of the child tailing the remote clipboard bridge. The
++    /// watcher task re-spawns it on ssh drops, so this is the current one (None
++    /// while between attempts) and exists only so shutdown can kill it.
++    clip_pid: Arc<Mutex<Option<i32>>>,
+ }
+ 
+ /// minimum spacing between foreground polls — each is an ssh handshake, so we
+@@ -507,6 +513,11 @@ const SETTLE_DELAY: Duration = Duration::from_millis(350);
+ /// so refuse loudly instead.
+ const OSC52_MAX: usize = 100_000;
+ 
++/// LOCAL PATCH — backoff before re-tailing the clipboard bridge after its ssh
++/// drops. Nothing is lost by being slow here: the bridge is a convenience, and
++/// the pane itself reconnects on its own schedule.
++const CLIP_RETRY: Duration = Duration::from_secs(5);
++
+ impl App {
+     fn paint(&mut self) {
+         if !self.tty {
+@@ -575,6 +586,119 @@ impl App {
+         self.hint(&format!("copied {n} line{}", if n == 1 { "" } else { "s" }));
+     }
+ 
++    /// LOCAL PATCH — mirror the remote's yanks into the host clipboard.
++    ///
++    /// herdr's `terminal session` stream carries screen frames only: a pane's
++    /// OSC 52 leaves through a separate channel to herdr's own client, so a
++    /// yank inside a mirror pane never reaches the outer terminal on its own
++    /// (measured against 0.7.5 — observe and control alike). The remote nvim
++    /// therefore also appends every yank as one base64 line to
++    /// `~/.cache/herdr-mirror-clip/<pane>` (see dotfiles
++    /// `nvim/lua/config/options.lua`), and this tail turns those lines back
++    /// into local OSC 52 writes.
++    ///
++    /// One watcher for the wrapper's whole life, not one per session: the
++    /// bridge file is keyed by remote pane, so a mode switch has nothing to
++    /// re-target, and a yank is worth forwarding while merely observing too.
++    fn start_clip_watch(&mut self) {
++        if !self.tty {
++            return; // --dump owns no terminal, so there is no clipboard to write
++        }
++        let tx = self.tx.clone();
++        let args = self.args.clone();
++        let slot = self.clip_pid.clone();
++        tokio::spawn(async move {
++            // $HOME expands on the remote; the pane id is quoted because it
++            // contains a colon and is not ours to interpret
++            let cmd = format!(
++                "exec tail -n0 -F \"$HOME/.cache/herdr-mirror-clip/\"{} 2>/dev/null",
++                sh_quote(&args.pane_target)
++            );
++            loop {
++                let mut builder = match &args.container {
++                    None => {
++                        let mut c = tokio::process::Command::new("ssh");
++                        // ride the daemon's ControlMaster when there is one, so a
++                        // long-lived tail costs a channel and not a handshake
++                        if let Some(path) = args.ctl_path.as_deref() {
++                            c.arg("-S").arg(path);
++                        }
++                        c.args(crate::remote::SSH_COMMON_OPTS).arg(&args.ssh_target).arg(&cmd);
++                        c
++                    }
++                    Some(ct) => {
++                        // async resolve: this task shares the pane's
++                        // single-threaded runtime with input and rendering
++                        let id = match crate::docker::resolve(&ct.docker_bin, &ct.kind).await {
++                            Ok(ids) => ids.into_iter().next(),
++                            Err(_) => None,
++                        };
++                        let Some(id) = id else {
++                            tokio::time::sleep(CLIP_RETRY).await;
++                            continue;
++                        };
++                        let mut c = tokio::process::Command::new(&ct.docker_bin);
++                        // `sh -c` not `-lc`: match ssh's non-login remote shell
++                        c.args(["exec", "-i", &id, "sh", "-c", &cmd]);
++                        c
++                    }
++                };
++                let spawned = builder
++                    .stdin(Stdio::null())
++                    .stdout(Stdio::piped())
++                    .stderr(Stdio::null())
++                    .spawn();
++                let Ok(mut child) = spawned else {
++                    tokio::time::sleep(CLIP_RETRY).await;
++                    continue;
++                };
++                *slot.lock().unwrap() = child.id().map(|p| p as i32);
++                if let Some(stdout) = child.stdout.take() {
++                    let mut lines = BufReader::new(stdout).lines();
++                    while let Ok(Some(l)) = lines.next_line().await {
++                        if tx.send(Msg::Clip(l)).await.is_err() {
++                            return; // the wrapper is gone
++                        }
++                    }
++                }
++                let _ = child.wait().await;
++                *slot.lock().unwrap() = None;
++                // the ssh dropped (network, remote restart). The pane keeps
++                // working without the bridge, so come back for it quietly.
++                tokio::time::sleep(CLIP_RETRY).await;
++            }
++        });
++    }
++
++    /// LOCAL PATCH — kill the bridge tail so shutdown never orphans an ssh.
++    fn stop_clip_watch(&mut self) {
++        if let Some(pid) = self.clip_pid.lock().unwrap().take() {
++            unsafe { libc::kill(pid, libc::SIGTERM) };
++        }
++    }
++
++    /// LOCAL PATCH — a bridge line is already base64, so it goes straight into
++    /// an OSC 52 write. Only the remote nvim ever writes that file, but the
++    /// line is still validated: anything else would reach the host terminal
++    /// verbatim.
++    fn handle_clip(&mut self, line: String) {
++        let b64 = line.trim();
++        if b64.is_empty() {
++            return;
++        }
++        if !b64.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/' | b'=')) {
++            return;
++        }
++        // measure the decoded size so the cap means the same thing here as it
++        // does in copy_selection
++        if b64.len() / 4 * 3 > OSC52_MAX {
++            self.hint("remote yank too large to copy");
++            return;
++        }
++        write_stdout(&format!("\x1b]52;c;{b64}\x07"));
++        self.hint("copied remote yank");
++    }
++
+     /// Kick a background poll of the remote pane's foreground process, throttled
+     /// so a mouse burst doesn't spawn an ssh per event. The result arrives as
+     /// Msg::Foreground and updates `remote_is_shell`.
+@@ -1006,8 +1130,10 @@ pub async fn run(args: Args) -> Result<()> {
+         // moves it if the remote turns out to be a TUI
+         app_cursor_keys: false,
+         sel: None,
++        clip_pid: Arc::new(Mutex::new(None)),
+     };
+     app.connect(if app.args.always_control { Mode::Control } else { Mode::Observe }).await;
++    app.start_clip_watch();
+ 
+     let mut sigterm = signal(SignalKind::terminate())?;
+     let mut sigint = signal(SignalKind::interrupt())?;
+@@ -1044,6 +1170,7 @@ pub async fn run(args: Args) -> Result<()> {
+                         app.sync_mouse_grab();
+                         app.sync_cursor_key_mode();
+                     },
++                    Some(Msg::Clip(line)) => app.handle_clip(line),
+                 }
+             }
+             _ = sigwinch.recv() => {
+@@ -1094,6 +1221,7 @@ pub async fn run(args: Args) -> Result<()> {
+     }
+ 
+     // clean shutdown: release control if held, kill the ssh child, restore tty
++    app.stop_clip_watch(); // LOCAL PATCH — and the bridge tail's ssh with it
+     if let Some(mut s) = app.session.take() {
+         if s.mode == Mode::Control {
+             let _ = s.stdin.write_all(b"{\"type\":\"terminal.release\"}\n").await;
