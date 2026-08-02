@@ -78,6 +78,18 @@ key     = "prefix+minus"
 type    = "plugin_action"
 command = "mirror.remote-split-down"
 
+# prefix+alt+r: reviewr(persiyanov.reviewr)のサイドバーをトグルする。
+# reviewr はマシン境界を越えられない(サイドバーはそのマシンのバイナリをリポの cwd で
+# 起動し、agent 解決も行コメント書き込みも同じマシンの herdr API を使う)。一方 prefix キーは
+# ミラーペインでもローカルの herdr が食うため、ローカルのアクションを直接割り当てると
+# 画面に映っているリモートのレビューは開かない。reviewr-toggle が押した場所を見て
+# 「ミラー内 → そのホストの herdr へ ssh 越しに invoke / ミラー外 → ローカルへ invoke」に振り分ける。
+# ネイティブの resize_mode=prefix+r・reload_config=prefix+shift+r とは別キー。
+[[keys.command]]
+key     = "prefix+alt+r"
+type    = "shell"        # detached 実行。失敗は ~/.local/state/herdr-mirror/reviewr-toggle.log
+command = "reviewr-toggle"
+
 # prefix+?: キーバインド一覧。ネイティブ help(同キー)はオーバーレイが狭くて読みにくいため、
 # 画面ほぼ全面の popup で herdr-keys(config.toml と --default-config から生成)を less で開く。
 [[keys.command]]

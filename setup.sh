@@ -90,6 +90,7 @@ create_symlink "$DOTFILES_DIR/.zshrc"  "$HOME/.zshrc"
 # bin/ 配下のスクリプトは PATH の通った ~/.local/bin へ個別リンク
 create_symlink "$DOTFILES_DIR/bin/cc-compose" "$HOME/.local/bin/cc-compose"
 create_symlink "$DOTFILES_DIR/bin/herdr-keys" "$HOME/.local/bin/herdr-keys"
+create_symlink "$DOTFILES_DIR/bin/reviewr-toggle" "$HOME/.local/bin/reviewr-toggle"
 # herdr: $XDG_CONFIG_HOME/herdr をディレクトリごとリンクする。
 # log/socket/session.json は herdr 自身が同ディレクトリに置くため .gitignore で除外済み。
 # config.toml 単体をここでリンクしてはいけない(リンク元とリンク先が同一パスになり自己参照で壊れる)。

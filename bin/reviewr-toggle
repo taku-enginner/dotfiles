@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# reviewr(persiyanov.reviewr)のサイドバーを、押した場所に応じて正しい herdr でトグルする。
+#
+# reviewr はマシン境界を越えられない: サイドバーはそのマシンのバイナリを
+# レビュー対象リポの cwd で起動し、agent の解決も行コメントの書き込みも
+# 同じマシンの herdr API を使う。よってリモートの Claude をレビューするには
+# リモートの herdr でアクションを起動する必要がある。
+#
+# 一方 herdr の prefix キーは、ミラーペインであってもローカルの herdr が食う。
+# そのままローカルのアクションを叩くとローカルの agent と cwd が対象になり、
+# 画面に映っているリモートのレビューは開かない。そこでこのスクリプトが
+# 「ミラーペインから押されたか」を判定して振り分ける。
+#
+#   ミラー内 → ssh でそのホストの herdr に invoke(対象ワークスペースを先に focus)
+#   ミラー外 → ローカルの herdr に invoke
+#
+# 判定は herdr が [[keys.command]] type="shell" に渡す HERDR_ACTIVE_WORKSPACE_ID を
+# mirror プラグインの id マップで逆引きする。ホスト名も ssh 先もマップと hosts.toml
+# から引くので、ホストを増やしてもこのスクリプトは変えなくてよい。
+#
+# type="shell" は detached 実行で出力がどこにも出ないため、失敗はログに残す。
+set -euo pipefail
+
+PLUGIN="persiyanov.reviewr"
+ACTION="${1:-toggle}"          # toggle | open | close
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-mirror"
+HOSTS="${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config/mirror/hosts.toml"
+LOG="$STATE/reviewr-toggle.log"
+
+log() { mkdir -p "$STATE"; printf '%s %s\n' "$(date -Is)" "$*" >>"$LOG"; }
+die() { log "ERROR: $*"; exit 1; }
+
+# hosts.toml の [hosts.<name>] から key を1つ取り出す(値は "..." 前提)
+host_field() {
+  awk -v sec="[hosts.$1]" -v key="$2" '
+    $0 == sec { inside = 1; next }
+    inside && /^[ \t]*\[/ { exit }
+    inside && $0 ~ "^[ \t]*" key "[ \t]*=" {
+      sub(/^[^=]*=[ \t]*/, ""); sub(/[ \t]*#.*$/, ""); gsub(/^"|"$/, "")
+      print; exit
+    }
+  ' "$3"
+}
+
+ws="${HERDR_ACTIVE_WORKSPACE_ID:-}"
+host=""
+remote_ws=""
+
+# ローカルのワークスペースがどのホストの何をミラーしているか逆引きする。
+# tombstone(ローカルで閉じたミラー)は対象外。
+if [ -n "$ws" ] && [ -d "$STATE" ]; then
+  for map in "$STATE"/*-map.json; do
+    [ -f "$map" ] || continue
+    remote_ws="$(
+      jq -r --arg ws "$ws" '
+        .workspaces // {} | to_entries[]
+        | select(.value.localId == $ws and (.value.tombstone // false) != true)
+        | .key' "$map" 2>/dev/null | head -1
+    )"
+    if [ -n "$remote_ws" ]; then
+      host="$(basename "$map" -map.json)"
+      break
+    fi
+  done
+fi
+
+# ミラー外(ローカルのワークスペース)ならローカルの herdr に投げる。
+# ローカルに reviewr を入れていなければアクションが無いと言われるだけ。
+if [ -z "$host" ]; then
+  if ! out="$(herdr plugin action invoke "$ACTION" --plugin "$PLUGIN" 2>&1)"; then
+    die "local invoke 失敗: $out"
+  fi
+  exit 0
+fi
+
+[ -r "$HOSTS" ] || die "hosts.toml が読めない: $HOSTS"
+target="$(host_field "$host" target "$HOSTS")"
+[ -n "$target" ] || die "hosts.toml に [hosts.$host] の target が無い"
+remote_bin="$(host_field "$host" remote_bin "$HOSTS")"
+# 既定は mirror プラグインと同じ ~/.local/bin/herdr。チルダはエスケープしない
+# (ここで \~ にするとリモートの shell が展開せず「そのようなファイルはありません」になる)。
+# ローカルでは展開されず、リモートの shell が語頭のチルダとして展開する。
+remote_bin="${remote_bin:-~/.local/bin/herdr}"
+
+# invoke にコンテキスト指定のフラグが無く、リモートは自分の focus から対象を決める。
+# ミラーしているワークスペースを先に focus させて、開く場所を確定させる。
+cmd="$remote_bin workspace focus $remote_ws >/dev/null 2>&1; $remote_bin plugin action invoke $ACTION --plugin $PLUGIN"
+
+# daemon の ControlMaster があれば握手を省く(無ければ普通に繋ぐ)
+ctl="$STATE/$host.ctl"
+ssh_opts=(-o BatchMode=yes -o ConnectTimeout=5)
+[ -S "$ctl" ] && ssh_opts=(-S "$ctl" "${ssh_opts[@]}")
+
+if ! out="$(ssh "${ssh_opts[@]}" "$target" "$cmd" 2>&1)"; then
+  die "remote invoke 失敗 (host=$host target=$target ws=$remote_ws): $out"
+fi
