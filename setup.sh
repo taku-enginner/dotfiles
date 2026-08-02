@@ -105,7 +105,6 @@ CLAUDE_BASE_DIR="${CLAUDE_BASE_DIR:-$HOME/claude}"          # 会社 baseline(�
 CLAUDE_PERSONAL_DIR="$DOTFILES_DIR/claude"                 # 個人設定(このリポ)
 CLAUDE_OUT_DIR="$HOME/.claude"                             # 組み立て先
 MOOVIBE_SKILLS_DIR="${MOOVIBE_SKILLS_DIR:-$HOME/work/moovibe/skills}"
-PERSONAL_CONTEXT_DIR="${PERSONAL_CONTEXT_DIR:-$HOME/personal-context}"
 
 # 丸ごと symlink を実ディレクトリへ置換(baseline と個人の両ソースから個別 link するため)
 ensure_real_dir() {
@@ -288,8 +287,12 @@ setup_claude() {
   link_skills
   link_hooks
 
-  # コマンドは personal-context を whole-dir symlink(所有者が正当なので汚染なし)
-  create_symlink "$PERSONAL_CONTEXT_DIR/.claude/commands" "$CLAUDE_OUT_DIR/commands"
+  # personal-context 連携は 2026-08-02 に撤去(コンテキスト削減)。
+  #   - commands の whole-dir symlink をやめた(11 個のスラッシュコマンドは personal-context
+  #     ディレクトリで作業する時だけ効く。全ディレクトリに要らない)
+  #   - statusLine の override をやめ baseline の statusline.py に戻した
+  #   - CLAUDE.override.md の global_rules import をやめた
+  # 戻したい時は git log で本コミットを参照。
 
   # user レベルの settings.local.json は Claude Code に読まれない(死にファイル)ので掃除
   if [ -f "$CLAUDE_OUT_DIR/settings.local.json" ]; then
@@ -299,7 +302,10 @@ setup_claude() {
 
   setup_claude_cron
   setup_mcp_servers
-  setup_plugin_marketplaces
+  # setup_plugin_marketplaces は 2026-08-02 に呼び出しを外した。
+  # vercel / crit プラグインの説明文がスキル一覧を 30KB 超に膨らませていたため
+  # settings.override.json から enabledPlugins / extraKnownMarketplaces を削除した。
+  # marketplace を再登録すると次の起動でまた候補に載るので、追加もしない。
 }
 
 setup_claude

@@ -1,8 +1,4 @@
 {
-  "statusLine": {
-    "type": "command",
-    "command": "~/personal-context/.claude/statusline.py"
-  },
   "skillOverrides": {
     "init": "off",
     "review": "off",
@@ -10,24 +6,6 @@
     "security-review": "off",
     "simplify": "off",
     "verify": "off"
-  },
-  "enabledPlugins": {
-    "vercel@claude-plugins-official": true,
-    "crit@crit": true
-  },
-  "extraKnownMarketplaces": {
-    "claude-plugins-official": {
-      "source": {
-        "source": "github",
-        "repo": "anthropics/claude-plugins-official"
-      }
-    },
-    "crit": {
-      "source": {
-        "source": "github",
-        "repo": "tomasz-tomczyk/crit"
-      }
-    }
   },
   "tui": "fullscreen",
   "preferredNotifChannel": "terminal_bell",

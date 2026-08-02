@@ -68,14 +68,19 @@ git clone https://github.com/taku-enginner/dotfiles.git && \
 | `~/claude`(会社 baseline / 別リポ) | upstream ミラー。**読取専用・一切書き込まない**。CLAUDE.md・settings.json・skills・hooks・memory・statusline.py の baseline |
 | `dotfiles/claude/`(本リポ) | 個人設定。`CLAUDE.override.md`・`settings.override.json` |
 | `~/work/moovibe/skills`(任意) | 業務スキル。あれば個別 link |
-| `~/personal-context/.claude/commands`(別リポ) | スラッシュコマンド。whole-dir symlink |
 
 `setup.sh` の組み立て(`setup_claude`):
 
-- **CLAUDE.md**: baseline ＋ `CLAUDE.override.md` を連結して**実ファイル生成**(symlink にすると personal-context の SessionStart フックが baseline 本体を汚染するため)
+- **CLAUDE.md**: baseline ＋ `CLAUDE.override.md` を連結して**実ファイル生成**(symlink にすると外部リポのフックが baseline 本体へ追記して汚染しうるため)
 - **settings.json**: baseline ⊕ `settings.override.json` を `jq` で**合成生成**(配列=結合／オブジェクト=deep merge／スカラー=後勝ち)。`settings.local.json` は user レベルでは読まれないため生成しない
 - **skills / hooks**: `~/.claude/{skills,hooks}` を**実ディレクトリ**にし、baseline と個人の両ソースから**個別 symlink**(丸ごと symlink しない＝どのリポの作業ツリーも汚さない)。herdr 管理 hook は herdr に委ねる
-- **commands**: personal-context を whole-dir symlink
+
+### 入れていないもの(2026-08-02 に撤去)
+
+コンテキスト削減のため、スキル一覧を膨らませていた連携を外した。実測でスキル説明文が計 43KB あり、その 7 割がプラグイン由来だった。
+
+- **プラグイン**: `vercel`(約 35 エントリ / 21KB)と `crit`(9.6KB)を `enabledPlugins` から外し、`extraKnownMarketplaces` と `setup_plugin_marketplaces` の呼び出しも削除。実体は `~/.claude/plugins/` に残っているので `enabledPlugins` に戻せば復活する
+- **personal-context 連携**: `commands` の whole-dir symlink(11 コマンド)、`statusLine` の override、`CLAUDE.override.md` の `global_rules.md` import。コマンドとルールは personal-context ディレクトリで作業する時だけ効けば足りる(あちらの `CLAUDE.md` が `global_rules.md` を自前で import している)。`statusLine` は baseline の `statusline.py` に戻した
 
 `~/claude/setup.sh` は実行しない(本 `setup.sh` が組み立てを全部担う)。会社 baseline を更新するときは `~/claude` で `git pull` するだけ。
 
