@@ -7,7 +7,16 @@
 #   1. ~/.config/herdr/config.toml の [keys]          … 自分の上書き
 #   2. 同 [[keys.command]]                            … カスタム / プラグイン割当
 #   3. herdr --default-config の [keys]               … 上書きしていない既定
+#   4. herdr plugin action list                       … プラグインアクションの説明
 # 1 で上書きされた既定は 3 から除外する。
+#
+# 表示は全セクション「キー → 動作」の向きで揃える(以前はセクションごとに
+# 逆向きで、1 列目に動作名とキーが混在していた)。
+#
+# 4 を引くのは、プラグインアクションが「押した場所で挙動が変わる」ものを含み、
+# 割当名だけでは実際の動作が読めないため(例: mirror.remote-new-tab はミラー内なら
+# リモートにタブ、ミラー外ならローカルタブ)。設定に書いてあるのに実在しない
+# アクションもここで判る。サーバーが止まっていたら説明なしで続行する。
 #
 #   herdr-keys --no-pager   ページャを通さず素で出す
 set -euo pipefail
@@ -24,8 +33,8 @@ if [ ! -r "$CONFIG" ]; then
 fi
 
 render() {
-  # $1=config.toml $2=既定設定のダンプ
-  awk '
+  # $1=config.toml $2=プラグインアクション一覧(TSV) $3=既定設定のダンプ
+  awk -v cfg="$1" -v acts="$2" '
     function clean(v) {
       sub(/[ \t]+#.*$/, "", v)            # 行末コメント
       gsub(/^[ \t]+|[ \t]+$/, "", v)
@@ -34,10 +43,9 @@ render() {
       gsub(/[ \t]*,[ \t]*/, " / ", v)     # 配列は「A / B」表記に
       return v
     }
-    function put(dst, name, val) { printf "  %-25s %s\n", name, val }
 
     # --- 1st file: 自分の config.toml ---
-    FNR == NR {
+    FILENAME == cfg {
       line = $0
       if (line ~ /^[ \t]*\[\[keys\.command\]\]/) { flushcmd(); sec = "cmd"; next }
       if (line ~ /^[ \t]*\[keys\]/)              { sec = "keys"; next }
@@ -58,7 +66,14 @@ render() {
       next
     }
 
-    # --- 2nd file: herdr --default-config ---
+    # --- 2nd file: herdr plugin action list (plugin.action \t title \t desc) ---
+    FILENAME == acts {
+      n = split($0, a, "\t")
+      if (n >= 1 && a[1] != "") { adesc[a[1]] = (n >= 3 ? a[3] : ""); have_acts = 1 }
+      next
+    }
+
+    # --- 3rd file: herdr --default-config ---
     {
       line = $0
       if (line ~ /^[ \t]*\[keys\]/)                  { dsec = 1; next }
@@ -84,12 +99,17 @@ render() {
     END {
       flushcmd()
       pfx = ("prefix" in own) ? own["prefix"] : "ctrl+b(既定)"
-      printf "\n  herdr キーマップ   prefix = %s   (生成元: %s)\n\n", pfx, ARGV[1]
+      printf "\n  herdr キーマップ   prefix = %s   (生成元: %s)\n", pfx, cfg
+      print  "  どの段も「キー → 動作」の順。prefix は上のキーを先に押す。"
+      print  ""
 
       print "■ 自分の上書き  [keys]"
       for (i = 1; i <= on; i++) {
-        v = own[oorder[i]]
-        put("", oorder[i], (v == "") ? "(無効化)" : v)
+        name = oorder[i]
+        if (name == "prefix") continue               # 見出しに出しているので省く
+        v = own[name]
+        # キー列は ASCII に保つ(printf の桁指定はバイト数なので全角を混ぜると崩れる)
+        printf "  %-25s %s\n", (v == "" ? "-" : v), (v == "" ? name " (無効化)" : name)
       }
 
       print ""
@@ -97,27 +117,42 @@ render() {
       for (i = 1; i <= cn; i++) {
         split(cmds[i], f, "\t")
         printf "  %-25s %-14s %s\n", f[1], f[2], f[3]
+        if (f[2] == "plugin_action" && have_acts) {
+          if (!(f[3] in adesc))
+            printf "  %-25s %-14s └ ★存在しないアクション(herdr plugin action list に無い)\n", "", ""
+          else if (adesc[f[3]] != "")
+            printf "  %-25s %-14s └ %s\n", "", "", adesc[f[3]]
+        }
       }
 
       print ""
       print "■ 既定のまま(上書きしていないもの)"
-      for (i = 1; i <= dn; i++) put("", dorder[i], def[dorder[i]])
+      for (i = 1; i <= dn; i++) printf "  %-25s %s\n", def[dorder[i]], dorder[i]
 
       print ""
       print "  上書きした既定キーは無効になる(例: next_tab を prefix+ctrl+n にすると prefix+n は効かない)。"
       print "  navigate_* は navigate モード(セッションナビゲータ)を開いている間だけ効くローカルキー。"
-      print "  プラグインアクションの説明は `herdr plugin action list`。q で閉じる。"
+      print "  └ 付きの行はプラグインアクションの実際の動作。押した場所で挙動が変わるものがある。"
+      print "  q で閉じる。"
       print ""
     }
-  ' "$1" "$2"
+  ' "$1" "$2" "$3"
 }
 
 DUMP="$(mktemp)"
-trap 'rm -f "$DUMP"' EXIT
+ACTS="$(mktemp)"
+trap 'rm -f "$DUMP" "$ACTS"' EXIT
 herdr --default-config >"$DUMP" 2>/dev/null
 
+# プラグインアクションの説明。サーバー停止中・jq 無し・プラグイン未導入なら空のまま。
+if command -v jq >/dev/null 2>&1; then
+  herdr plugin action list 2>/dev/null \
+    | jq -r '.result.actions[]? | [(.plugin_id + "." + .action_id), (.title // ""), (.description // "")] | @tsv' \
+    >"$ACTS" 2>/dev/null || : >"$ACTS"
+fi
+
 if [ "${1:-}" = "--no-pager" ] || [ ! -t 1 ]; then
-  render "$CONFIG" "$DUMP"
+  render "$CONFIG" "$ACTS" "$DUMP"
 else
-  render "$CONFIG" "$DUMP" | less -R
+  render "$CONFIG" "$ACTS" "$DUMP" | less -R
 fi
