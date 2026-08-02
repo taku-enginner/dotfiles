@@ -128,3 +128,5 @@ fi
 cd $HOME/work
 # secrets / AWS profile / bastion 等は private リポが持つ(存在すれば source)
 [ -f "$HOME/dotfiles-private/zshrc.private" ] && source "$HOME/dotfiles-private/zshrc.private"
+
+if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi

@@ -9,6 +9,7 @@ neovim = "latest"
 node = "lts"
 python = "latest"
 terraform = "latest"
+worktrunk = "latest"
 
 [settings]
 experimental = true
