@@ -90,3 +90,6 @@ height  = "90%"
 [ui.toast]
 delivery      = "terminal"
 delay_seconds = 0
+
+[experimental]
+allow_nested = true
