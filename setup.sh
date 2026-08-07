@@ -96,6 +96,25 @@ create_symlink "$DOTFILES_DIR/bin/reviewr-toggle" "$HOME/.local/bin/reviewr-togg
 # config.toml 単体をここでリンクしてはいけない(リンク元とリンク先が同一パスになり自己参照で壊れる)。
 create_symlink "$DOTFILES_DIR/herdr" "$XDG_CONFIG_HOME/herdr"
 
+# herdr のヘッドレスサーバ用 systemd user unit。
+# systemd の user manager は PAM 経由で起動するため ~/.zshenv の XDG_CONFIG_HOME を知らない。
+# unit の探索先はつねに ~/.config/systemd/user なので、$XDG_CONFIG_HOME ではなくここに固定で置く。
+# (systemctl --user disable はこの symlink ごと消す。戻すには setup.sh を再実行する)
+mkdir -p "$HOME/.config/systemd/user"
+create_symlink "$DOTFILES_DIR/systemd/user/herdr.service" "$HOME/.config/systemd/user/herdr.service"
+
+# 常駐させるのは herdr-mirror のミラー元になるリモート機だけ。
+# ローカルのように herdr を対話起動する機では server が二重に立つので有効化しない。
+if confirm_exe "herdr server を systemd user service として常駐させますか?(リモート機向け)"; then
+  # linger が無いとログアウト時に user manager ごと落ち、次に誰かが ssh するまでサーバが上がらない
+  loginctl enable-linger "$USER" 2>/dev/null ||
+    sudo loginctl enable-linger "$USER" ||
+    echo "⚠️ linger を有効にできませんでした。手動で 'sudo loginctl enable-linger $USER' を実行してください"
+  systemctl --user daemon-reload
+  systemctl --user enable --now herdr.service
+  systemctl --user --no-pager status herdr.service | head -5
+fi
+
 # ============================================================
 # Claude Code 設定の組み立て(baseline=~/claude 読取専用 ⊕ 個人=dotfiles/claude)
 #   - ~/claude は会社 baseline のミラー。ここでは読むだけ・一切書き込まない。

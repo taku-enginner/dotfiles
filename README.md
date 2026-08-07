@@ -10,6 +10,7 @@
 - [管理対象](#管理対象)
 - [Claude Code 設定](#claude-code-設定)
 - [プロンプト下書きペイン(herdr)](#プロンプト下書きペインherdr)
+- [リモート herdr の常駐(herdr-mirror)](#リモート-herdr-の常駐herdr-mirror)
 - [private リポジトリ](#private-リポジトリ)
 
 ## 構成
@@ -55,6 +56,7 @@ git clone https://github.com/taku-enginner/dotfiles.git && \
 | `git` `sheldon` `nvim` `mise` | `$XDG_CONFIG_HOME/<同名>` |
 | `.zshrc` | `~/.zshrc` |
 | `herdr/config.toml` | `$XDG_CONFIG_HOME/herdr/config.toml` |
+| `systemd/user/herdr.service` | `~/.config/systemd/user/herdr.service`(XDG 選択に依らず固定) |
 | `bin/cc-compose` | `~/.local/bin/cc-compose` |
 
 その他: `~/.zshenv`(XDG の選択を保存)、`~/dotfiles-private/zshrc.private`(`.zshrc` から source)。
@@ -105,6 +107,34 @@ Claude Code の Ctrl-G(外部エディタ)は**使わない**。claude 自身が
 - 送信先の決定順: ① `:CcTarget` の固定 ② `cc-compose` が渡した分割元(`CC_TARGET_PANE`) ③ レイアウト座標で「自分の左にあって縦に重なる最も近い Claude ペイン」。同じタブに Claude が複数あっても③まで決定的に選ぶ
 - 実装: `bin/cc-compose`(ペイン分割)、`nvim/lua/config/herdr.lua`(`:CcSend` / `:CcSubmit`)
 - 送信キーを変えるときは `claude/keybindings.json` と `nvim/lua/config/herdr.lua` の `SUBMIT_KEY` を揃える
+
+## リモート herdr の常駐(herdr-mirror)
+
+`herdr-mirror` プラグインがリモート(`tak.moove.bz`)の workspace/agent をローカルのサイドバーへミラーする。前提は「**リモートで herdr server が動いていること**」の一点で、ここが落ちると `prefix+alt+n`(リモートに workspace を作る)などのリモート系キーが軒並み無反応になる。
+
+リモートには誰も ssh していない時間帯があり、リブートすればサーバは消える。手動起動に頼らないよう systemd user service で常駐させる。
+
+```bash
+# リモート機で一度だけ(setup.sh の該当プロンプトに y と答えるのと同じ)
+mkdir -p ~/.config/systemd/user
+ln -s ~/dotfiles/systemd/user/herdr.service ~/.config/systemd/user/herdr.service
+loginctl enable-linger "$USER"     # 無いとログアウトで user manager ごと落ちる
+systemctl --user enable --now herdr.service
+```
+
+- unit は `zsh -lc 'exec herdr server'` で起動する。systemd の user manager は `~/.zshenv` を読まないため、直接 `herdr server` を叩くと `XDG_CONFIG_HOME` を見失い、ペインのシェルも `~/.local/bin` を含まない PATH になる
+- unit の置き場は `$XDG_CONFIG_HOME` ではなく **`~/.config/systemd/user` 固定**(user manager は PAM 経由で起動するので `~/.zshenv` の XDG 選択が届かない)
+- ローカル(WSL)では herdr を対話起動しているので有効化しない。両方立てると server が二重になる
+- `systemctl --user disable` は symlink 本体まで消す。戻すには `setup.sh` を再実行する
+
+リモート系のキーが効かないときの切り分け:
+
+| 見るもの | 正常なら |
+| --- | --- |
+| ローカル `tail ~/.local/state/herdr-mirror/daemon.log` | `disconnected (remote herdr server is not running)` が出ていない |
+| リモート `herdr status` | `server: running` |
+| リモート `systemctl --user status herdr` | `active (running)` |
+| リモート `loginctl show-user "$USER" \| grep Linger` | `Linger=yes` |
 
 ## private リポジトリ
 

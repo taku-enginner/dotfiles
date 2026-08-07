@@ -1,0 +1,17 @@
+[Unit]
+Description=herdr headless server
+Documentation=https://herdr.dev
+After=network.target
+
+[Service]
+Type=simple
+# login shell 経由で起動する。systemd の user manager は PAM 経由で立ち上がるため
+# ~/.zshenv を読まず、直接 ExecStart すると XDG_CONFIG_HOME を知らないまま既定の
+# ~/.config を見に行く。ペインで起動するシェルの PATH も ~/.local/bin を含まない
+# 痩せたものになる。zsh -l を挟めば両方ともログイン時と同じ解決になる。
+ExecStart=/usr/bin/env zsh -lc 'exec herdr server'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
