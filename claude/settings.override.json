@@ -26,11 +26,10 @@
   "permissions": {
     "allow": [
       "Bash(/usr/bin/time -f '%es' zsh -i -c exit)"
-    ],
-    "deny": [
-      "Edit(**/.env*)",
-      "Edit(**/credentials*)",
-      "Edit(**/secrets/**)"
     ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
   }
 }

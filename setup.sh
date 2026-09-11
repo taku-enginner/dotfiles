@@ -124,7 +124,6 @@ fi
 CLAUDE_BASE_DIR="${CLAUDE_BASE_DIR:-$HOME/claude}"          # 会社 baseline(読取専用)
 CLAUDE_PERSONAL_DIR="$DOTFILES_DIR/claude"                 # 個人設定(このリポ)
 CLAUDE_OUT_DIR="$HOME/.claude"                             # 組み立て先
-MOOVIBE_SKILLS_DIR="${MOOVIBE_SKILLS_DIR:-$HOME/work/moovibe/skills}"
 
 # 丸ごと symlink を実ディレクトリへ置換(baseline と個人の両ソースから個別 link するため)
 ensure_real_dir() {
@@ -190,7 +189,9 @@ generate_settings() {
   fi
 }
 
-# skills: 実ディレクトリ ＋ 個別 symlink(baseline ＋ 個人 ＋ moovibe)。
+# skills: 実ディレクトリ ＋ 個別 symlink(baseline ＋ 個人)。
+# moovibe skills の供給は 2026-09-11 に撤去(4本とも使用実績ゼロ、うち code-review は
+# 組み込み skill と名前衝突して到達不能だった)。moovibe リポ側は無変更。
 # ~/.claude/skills を実dir化することで、どのリポの作業ツリーも汚さない。
 link_skills() {
   local dst="$CLAUDE_OUT_DIR/skills"
@@ -202,13 +203,6 @@ link_skills() {
   for s in "$CLAUDE_PERSONAL_DIR/skills"/*(N/); do
     create_symlink "$s" "$dst/${s:t}"
   done
-  if [ -d "$MOOVIBE_SKILLS_DIR" ]; then
-    for s in "$MOOVIBE_SKILLS_DIR"/*(N/); do
-      create_symlink "$s" "$dst/${s:t}"
-    done
-  else
-    echo "moovibe 未検出のため個人スキルのリンクをスキップ: $MOOVIBE_SKILLS_DIR" >&2
-  fi
 }
 
 # hooks: 実ディレクトリ ＋ baseline hook の個別 symlink。
@@ -238,17 +232,17 @@ link_hooks() {
   fi
 }
 
-# crontab に週次昇格スクリプトを登録(毎週金曜 19:47)
-setup_claude_cron() {
-  local cron_line="47 19 * * 5 $CLAUDE_OUT_DIR/hooks/weekly-promote.sh"
-  if crontab -l 2>/dev/null | grep -qF "weekly-promote.sh"; then
-    echo "crontab 登録済み: weekly-promote.sh"
-    return 0
-  fi
-  if confirm_exe "weekly-promote.sh を crontab に追加しますか? (毎週金曜 19:47)"; then
-    (crontab -l 2>/dev/null; echo "$cron_line") | crontab -
-    echo "crontab に追加: $cron_line"
-  fi
+# agents: 実ディレクトリ ＋ 個人 agent の個別 symlink。
+# baseline には置かない(マシン固有のモデル割り当てを含むため dotfiles 管理)。
+link_agents() {
+  local dst="$CLAUDE_OUT_DIR/agents"
+  local src="$CLAUDE_PERSONAL_DIR/agents"
+  [ -d "$src" ] || return 0
+  ensure_real_dir "$dst"
+  local a
+  for a in "$src"/*(N.); do
+    create_symlink "$a" "$dst/${a:t}"
+  done
 }
 
 # MCP サーバー(playwright, context7)を導入
@@ -297,7 +291,8 @@ setup_claude() {
 
   # baseline の単一ファイル/ディレクトリ(個人物なし)は symlink
   create_symlink "$CLAUDE_BASE_DIR/statusline.py" "$CLAUDE_OUT_DIR/statusline.py"
-  create_symlink "$CLAUDE_BASE_DIR/memory"        "$CLAUDE_OUT_DIR/memory"
+  # memory の配線は 2026-09-11 に撤去。Claude Code が読むのは projects/<proj>/memory/ であり
+  # ~/.claude/memory/ は一度も注入されていなかった(セッション起動時の注入内容で確認)。
 
   # keybindings.json は baseline に無い個人設定なので dotfiles から直リンク(マージ不要)
   create_symlink "$CLAUDE_PERSONAL_DIR/keybindings.json" "$CLAUDE_OUT_DIR/keybindings.json"
@@ -306,6 +301,7 @@ setup_claude() {
   generate_settings
   link_skills
   link_hooks
+  link_agents
 
   # personal-context 連携は 2026-08-02 に撤去(コンテキスト削減)。
   #   - commands の whole-dir symlink をやめた(11 個のスラッシュコマンドは personal-context
@@ -320,7 +316,10 @@ setup_claude() {
     echo "読まれない settings.local.json を削除"
   fi
 
-  setup_claude_cron
+  # crontab への weekly-promote.sh 登録は 2026-09-11 に撤去。
+  #   - 金曜 19:47 の 17 回中 4 回しか発火せず(残りは WSL 停止中、cron は catch-up しない)
+  #   - 発火した 4 回とも `claude -p` が非対話で ~/.claude 配下の書込承認を通せず成果ゼロ
+  # 定期実行を人間の稼働時間に依存させる設計自体をやめた。
   setup_mcp_servers
   # setup_plugin_marketplaces は 2026-08-02 に呼び出しを外した。
   # vercel / crit プラグインの説明文がスキル一覧を 30KB 超に膨らませていたため
