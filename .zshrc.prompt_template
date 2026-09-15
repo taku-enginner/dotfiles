@@ -6,7 +6,7 @@ zstyle ':vcs_info:git:*' stagedstr "%F{yellow}!"
 zstyle ':vcs_info:git:*' unstagedstr "%F{red}+"
 zstyle ':vcs_info:*' formats "%F{green}%c%u[%b]%f"
 zstyle ':vcs_info:*' actionformats '[%b|%a]'
-precmd () { vcs_info }
+# ※ precmd の実体は下の「command prompt」節にある（ここで定義しても上書きされる）
 
 # ローカルホスト名
 LOCAL_HOST='LAPTOP-0Q4P8DSR'
@@ -70,6 +70,15 @@ esac
 
 # command prompt
 precmd() {
+  # drvfs（/mnt/ 配下）では git status が極端に遅い。
+  # vault（/mnt/c/Users/taku1/vault）で実測 3.7 秒かかり、コマンドを打つたびに待たされる。
+  # 原因は check-for-changes が毎回ワークツリー全体を走査すること（untracked の走査だけで約5秒）。
+  # /mnt/ 配下では差分マーク（! +）を諦めてブランチ名だけにする。ネイティブ側は従来どおり。
+  if [[ $PWD == /mnt/* ]]; then
+    zstyle ':vcs_info:git:*' check-for-changes false
+  else
+    zstyle ':vcs_info:git:*' check-for-changes true
+  fi
   vcs_info
 }
 
