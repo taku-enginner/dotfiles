@@ -1,0 +1,378 @@
+#!/usr/bin/env bash
+# branch-sweep - リモートで削除されたブランチを、ローカルのブランチ・worktree ごと掃除する。
+#
+#   branch-sweep                    ~/work 配下の全リポジトリを掃除
+#   branch-sweep ~/work/jiji_dev    範囲を絞る(動作確認はまずこれで)
+#   branch-sweep --dry-run          fetch はするが削除しない
+#   branch-sweep --verbose          判定不能・fetch 失敗の内訳も出す
+#
+# 判定基準は「リモート側でブランチが消えたか(gone)」であって、マージ済みかは見ない。
+# squash merge されるとローカル履歴に元のコミットが残らず「未マージ」に見えるため、
+# merged 判定では取りこぼす。gone ならマージ方式に関係なく検出できる。
+#
+# 逆に gone は「消えた理由」を区別しない。MR をマージせずクローズした場合も、
+# 誤ってリモートのブランチを消した場合も、同じ gone になる。そこで実際の削除は
+# wt(worktrunk)に丸投げしている。wt は「このブランチを消すと作業が失われるか」を
+# 6条件(同一コミット/祖先/diff 空/tree 一致/シミュレートマージ/patch-id 一致)で
+# 判定して断ってくるので、それを gone 判定の二重チェックとして使う。断られたら消さない。
+# つまり「リモートで消えた」かつ「wt が消していいと言った」の両方が揃ったものだけ消える。
+#
+# 上流追跡のないブランチは gone 判定そのものが成立しない(リモートとの対応が無いので
+# 消えたかどうか分からない)。push すらしていないローカル作業の可能性があるため
+# 自動では消さず、件数だけ報告する。--verbose で名前が出る。
+#
+# ただしそれだけだと、自動では絶対に消えないブランチが溜まる一方になる。上流なしの
+# ものと、wt が未マージだと判断して残したものは、最後に1本ずつ確認して消せるように
+# してある。どちらも失うのはブランチの参照だけで、reflog から戻せる(既定90日)。
+# 未コミット変更のある worktree だけは戻せないので、この対話にも出さない。
+#
+# set -e は使わない。1リポジトリの fetch 失敗や1ブランチの削除失敗で全体を止めず、
+# 最後にまとめて報告したいため。
+set -uo pipefail
+
+usage() {
+  cat <<'USAGE'
+branch-sweep — リモートで削除されたブランチをローカルのブランチ・worktree ごと掃除する
+
+  branch-sweep [起点] [オプション]
+
+  起点            探索を始めるディレクトリ (既定: ~/work)
+  -n, --dry-run   fetch はするが削除しない。何が消えるかの確認用
+  -v, --verbose   判定不能ブランチと fetch 失敗リポジトリの内訳も出す
+  -y, --yes       一切確認せずに進める(しきい値の確認も後始末の確認も出ない)
+      --threshold N  この本数を超えたら削除前に確認する (既定: 5)
+      --depth N      起点から何階層まで .git を探すか (既定: 4)
+
+自動で消えるのは「リモート側でブランチが消えた」かつ「wt が削除を許可した」ものだけ。
+
+そのあと、自動では消えなかったもの(上流追跡なし / 未マージ)を1本ずつ確認して
+消せる。最終コミットと既定ブランチとの差を見せるので、そこで判断できる。
+q でいつでも抜けられる。未コミット変更のある worktree はここにも出てこない。
+USAGE
+}
+
+ROOT=""
+VERBOSE=0
+DRY_RUN=0
+ASSUME_YES=0
+THRESHOLD=5
+MAXDEPTH=4
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help)    usage; exit 0 ;;
+    -v|--verbose) VERBOSE=1 ;;
+    -n|--dry-run) DRY_RUN=1 ;;
+    -y|--yes)     ASSUME_YES=1 ;;
+    --threshold)  THRESHOLD="${2:?--threshold には本数が要る}"; shift ;;
+    --depth)      MAXDEPTH="${2:?--depth には階層数が要る}"; shift ;;
+    -*)           echo "不明なオプション: $1" >&2; usage >&2; exit 2 ;;
+    *)
+      [ -n "$ROOT" ] && { echo "起点は1つしか指定できない" >&2; exit 2; }
+      ROOT="$1" ;;
+  esac
+  shift
+done
+
+ROOT="${ROOT:-$HOME/work}"
+ROOT="${ROOT%/}"
+[ -d "$ROOT" ] || { echo "起点が見つからない: $ROOT" >&2; exit 1; }
+
+# 削除まわりを全面的に wt に任せている(冒頭の説明を参照)ので、無ければ何もできない。
+# mise の worktrunk = "latest" で入る。
+command -v wt >/dev/null 2>&1 || {
+  echo "wt(worktrunk)が見つからない。mise use -g worktrunk で入れる" >&2
+  exit 1
+}
+
+# 認証を求められて止まるのを防ぐ。鍵や ssh-agent は従来どおり効くが、
+# パスフレーズや ID/パスワードの対話プロンプトだけが出なくなる。
+# 通らないリポジトリは「fetch 失敗」として報告に回る。
+export GIT_TERMINAL_PROMPT=0
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=10}"
+
+# --------------------------------------------------------------------------
+# リポジトリの列挙
+#
+# 落としたいのは worktree だけ。worktree を本体と別に処理すると同じリポジトリを
+# 二重に見ることになるし、worktree の削除は本体側から wt が面倒を見る。
+#
+# ただし .git がファイルなのは worktree だけではない。submodule も同じ形をしていて、
+# しかも手元ではブランチが溜まるのは submodule のほう(jiji_dev 配下)。ファイルかどうかで
+# 判別すると submodule まで落ちる。
+#
+# 連結された worktree は git-dir が <本体>/.git/worktrees/<名前> を指し、
+# git-common-dir(<本体>/.git) と食い違う。本体と submodule では両者が一致するので、
+# これで見分ける。
+# --------------------------------------------------------------------------
+mapfile -t REPOS < <(
+  find "$ROOT" -maxdepth "$MAXDEPTH" \
+    \( -type d \( -name node_modules -o -name vendor -o -name .venv \) -prune \) -o \
+    \( -name .git -prune -printf '%h\n' \) 2>/dev/null \
+  | while read -r d; do
+      gd=$(git -C "$d" rev-parse --absolute-git-dir 2>/dev/null) || continue
+      gc=$(git -C "$d" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || continue
+      [ "$gd" = "$gc" ] && printf '%s\n' "$d"
+    done | sort
+)
+
+[ "${#REPOS[@]}" -eq 0 ] && { echo "git リポジトリが見つからない: $ROOT" >&2; exit 1; }
+
+declare -a GONE=()        # 削除候補    "repo<TAB>branch"
+declare -a DELETED=()     # 削除できた  "repo<TAB>branch"
+declare -a SKIPPED=()     # 消さなかった "repo<TAB>branch<TAB>理由"
+declare -a STALE=()       # 判定不能    "repo<TAB>branch"
+declare -a FETCH_FAIL=()  # fetch 失敗  "repo"
+declare -a LEFTOVER=()    # 後始末の対象 "repo<TAB>branch"
+declare -a EXTRA=()       # 後始末で消した "repo<TAB>branch"
+declare -A HEADS=()       # リポジトリごとのチェックアウト中ブランチ
+
+# ブランチに紐づく worktree のパス(無ければ空)
+worktree_path() {
+  git -C "$1" worktree list --porcelain 2>/dev/null | awk -v want="refs/heads/$2" '
+    /^worktree /{p = substr($0, 10)}
+    /^branch /{if (substr($0, 8) == want) {print p; exit}}'
+}
+
+# worktree に未コミット変更があるか。worktree が無ければ「汚れていない」扱い。
+is_dirty() {
+  local wtp
+  wtp=$(worktree_path "$1" "$2")
+  [ -n "$wtp" ] || return 1
+  [ -n "$(git -C "$wtp" status --porcelain 2>/dev/null)" ]
+}
+
+# 差分を見せる相手。origin/HEAD があればそれ、無ければ手元の定番を順に探す。
+default_branch() {
+  local repo="$1" b
+  b=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) \
+    && { printf '%s' "$b"; return; }
+  for b in main master develop; do
+    git -C "$repo" show-ref --verify --quiet "refs/heads/$b" && { printf '%s' "$b"; return; }
+  done
+}
+
+# --------------------------------------------------------------------------
+# 第1段階: fetch して gone を集める
+# --------------------------------------------------------------------------
+for repo in "${REPOS[@]}"; do
+  # remote が無いリポジトリで fetch するとエラーになるだけなので飛ばす。
+  # 上流も持ちようがないため、ブランチは後段で自動的に「判定不能」に入る。
+  if [ -n "$(git -C "$repo" remote 2>/dev/null)" ]; then
+    if ! timeout 60 git -C "$repo" fetch --prune --quiet >/dev/null 2>&1; then
+      FETCH_FAIL+=("$repo")
+    fi
+  fi
+
+  # 本体のリポジトリでチェックアウト中のブランチは消せない(git 自身が拒む)。
+  # ここで弾いておかないと wt が本体の worktree を消しにいこうとする。
+  head_branch=$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null)
+  HEADS["$repo"]="$head_branch"
+
+  while IFS=$'\t' read -r br up track; do
+    if [ -z "$up" ]; then
+      STALE+=("$repo"$'\t'"$br")
+    elif [ "$track" = "[gone]" ]; then
+      if [ "$br" = "$head_branch" ]; then
+        SKIPPED+=("$repo"$'\t'"$br"$'\t'"本体でチェックアウト中")
+      else
+        GONE+=("$repo"$'\t'"$br")
+      fi
+    fi
+  done < <(
+    git -C "$repo" for-each-ref \
+      --format=$'%(refname:short)\t%(upstream)\t%(upstream:track)' refs/heads 2>/dev/null
+  )
+done
+
+# --------------------------------------------------------------------------
+# 第2段階: 本数が多いときだけ確認する
+#
+# 定常運用なら gone は数本しか出ない。桁が変わるのは「前回 fetch から間が空いた」
+# ときで、そこだけ手を止めたい。毎回確認を出すと読まれなくなり、スキップ理由の
+# 報告まで一緒に読み飛ばされる。
+# --------------------------------------------------------------------------
+if [ "${#GONE[@]}" -gt "$THRESHOLD" ] && [ "$DRY_RUN" -eq 0 ] && [ "$ASSUME_YES" -eq 0 ]; then
+  echo "削除対象が ${#GONE[@]}本ある(しきい値 ${THRESHOLD}本)"
+  echo
+  printf '%s\n' "${GONE[@]}" | sort | while IFS=$'\t' read -r repo br; do
+    printf '  %-45s %s\n' "${repo#"$ROOT"/}" "$br"
+  done
+  echo
+  if [ ! -t 0 ]; then
+    echo "対話端末ではないので中止した。--yes か --dry-run を使う" >&2
+    exit 1
+  fi
+  printf '削除する? [y/N]: '
+  read -r answer
+  case "$answer" in
+    y|Y|yes|YES) ;;
+    *) echo "中止した"; exit 0 ;;
+  esac
+  echo
+fi
+
+# --------------------------------------------------------------------------
+# 第3段階: 削除
+#
+# --foreground を付けるのは報告を正確にするため。wt remove は既定では worktree を
+# .git/wt/trash/ へリネームして即座に返し、後片付けを切り離したプロセスに任せる。
+# そのままだと「削除した」と報告した後に失敗しても検知できない。
+# --------------------------------------------------------------------------
+
+# wt remove の出力から理由を1行取り出す。末尾の「↳ こうすれば消せる」というヒント行と、
+# インデントされた詳細行(?? WIP.txt など)を落とすと、最後に残るのが理由そのものになる。
+wt_reason() {
+  local line
+  line=$(printf '%s\n' "$1" \
+    | sed 's/\x1b\[[0-9;]*m//g' \
+    | grep -v '^↳' \
+    | grep -v '^[[:space:]]' \
+    | tail -1 \
+    | sed 's/^[^[:alnum:]]*[[:space:]]*//')
+  printf '%s' "${line:-wt remove がブランチを残した}"
+}
+
+for entry in "${GONE[@]}"; do
+  IFS=$'\t' read -r repo br <<<"$entry"
+
+  # --dry-run では wt を呼ばない。つまりここに並ぶのは「リモートで消えた」まで確認できた
+  # ブランチであって、wt の安全判定はまだ通っていない。実行すると未マージや未コミット
+  # 変更を理由に一部が残る。候補としか言えないので、報告でもそう書く。
+  if [ "$DRY_RUN" -eq 1 ]; then
+    DELETED+=("$repo"$'\t'"$br")
+    continue
+  fi
+
+  # --yes は wt のフック承認プロンプトを抑えるもので、ブランチの安全判定には効かない。
+  # 未マージや未コミット変更があれば wt はここで削除を拒む。
+  out=$(timeout 300 wt remove -C "$repo" --foreground --yes "$br" 2>&1)
+
+  # 終了コードは当てにならない。未コミット変更があるときは 1 を返すが、
+  # 「未マージなのでブランチを残した」ときは 0 を返してくる。実際に ref が
+  # 消えたかどうかで判定する。
+  if git -C "$repo" show-ref --verify --quiet "refs/heads/$br"; then
+    SKIPPED+=("$repo"$'\t'"$br"$'\t'"$(wt_reason "$out")")
+  else
+    DELETED+=("$repo"$'\t'"$br")
+  fi
+done
+
+# --------------------------------------------------------------------------
+# 報告
+# --------------------------------------------------------------------------
+print_grouped() {
+  local mark="$1"
+  local prev="" repo br reason
+  while IFS=$'\t' read -r repo br reason; do
+    if [ "$repo" != "$prev" ]; then
+      printf '  %s\n' "${repo#"$ROOT"/}"
+      prev="$repo"
+    fi
+    if [ -n "${reason:-}" ]; then
+      printf '    %s %s — %s\n' "$mark" "$br" "$reason"
+    else
+      printf '    %s %s\n' "$mark" "$br"
+    fi
+  done
+}
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "削除候補: ${#DELETED[@]}本  (--dry-run。wt の安全判定は未実施なので一部は残る)"
+else
+  echo "削除: ${#DELETED[@]}本"
+fi
+[ "${#DELETED[@]}" -gt 0 ] && printf '%s\n' "${DELETED[@]}" | sort | print_grouped "✓"
+
+echo
+echo "スキップ: ${#SKIPPED[@]}本"
+[ "${#SKIPPED[@]}" -gt 0 ] && printf '%s\n' "${SKIPPED[@]}" | sort | print_grouped "-"
+
+if [ "$VERBOSE" -eq 1 ]; then
+  echo
+  echo "判定不能: ${#STALE[@]}本 (上流追跡なし)"
+  [ "${#STALE[@]}" -gt 0 ] && printf '%s\n' "${STALE[@]}" | sort | print_grouped "?"
+  echo
+  echo "fetch 失敗: ${#FETCH_FAIL[@]}リポジトリ"
+  [ "${#FETCH_FAIL[@]}" -gt 0 ] && printf '%s\n' "${FETCH_FAIL[@]}" | sort | sed "s#^$ROOT/#  #"
+else
+  echo
+  echo "判定不能: ${#STALE[@]}本 (上流追跡なし / --verbose で一覧)"
+  echo "fetch 失敗: ${#FETCH_FAIL[@]}リポジトリ (--verbose で一覧)"
+fi
+
+# --------------------------------------------------------------------------
+# 第4段階: 自動では消えなかったものの後始末
+#
+# 上流なしと未マージは、このコマンドが自動で消すことは絶対にない。放っておくと
+# 溜まる一方なので、最後に1本ずつ聞く。どちらも失うのはブランチの参照だけで
+# reflog から戻せる。未コミット変更のある worktree は戻せないので対象から外す。
+# --------------------------------------------------------------------------
+for entry in ${STALE[@]+"${STALE[@]}"} ${SKIPPED[@]+"${SKIPPED[@]}"}; do
+  IFS=$'\t' read -r repo br _ <<<"$entry"
+  [ "$br" = "${HEADS[$repo]:-}" ] && continue   # チェックアウト中は git 自身が消させない
+  is_dirty "$repo" "$br" && continue
+  LEFTOVER+=("$repo"$'\t'"$br")
+done
+
+if [ "$DRY_RUN" -eq 0 ] && [ "$ASSUME_YES" -eq 0 ] && [ -t 0 ] && [ "${#LEFTOVER[@]}" -gt 0 ]; then
+  echo
+  printf '自動では消せないものが %s本ある。消したいものはある? [y/N]: ' "${#LEFTOVER[@]}"
+  read -r answer
+  case "$answer" in
+    y|Y|yes|YES)
+      # 先に配列へ取り込む。ループ中の read は端末から読むので、一覧をパイプで
+      # 流し込むと確認の入力とぶつかる。
+      mapfile -t QUEUE < <(printf '%s\n' "${LEFTOVER[@]}" | sort)
+      for entry in "${QUEUE[@]}"; do
+        IFS=$'\t' read -r repo br <<<"$entry"
+
+        printf '\n  %s / %s\n' "${repo#"$ROOT"/}" "$br"
+        meta=$(git -C "$repo" log -1 --format='%cs (%cr)  %s' "$br" 2>/dev/null)
+        [ -n "$meta" ] && printf '    %s\n' "$meta"
+
+        base=$(default_branch "$repo")
+        behind=""; ahead=""
+        if [ -n "$base" ] && [ "$base" != "$br" ]; then
+          read -r behind ahead < <(
+            git -C "$repo" rev-list --left-right --count "$base...$br" 2>/dev/null
+          )
+          [ -n "${ahead:-}" ] && printf '    %s 比 +%s / -%s\n' "$base" "$ahead" "$behind"
+        fi
+
+        wtp=$(worktree_path "$repo" "$br")
+        [ -n "$wtp" ] && printf '    worktree: %s\n' "$wtp"
+
+        printf '    消す? [y/N/q]: '
+        read -r pick
+        case "$pick" in
+          q|Q) echo "    中断した"; break ;;
+          y|Y|yes|YES)
+            # ここに並ぶのは定義上どれも未マージ扱いなので -D が要る。
+            # 汚れた worktree は上で除外済みなので --force は使わない。
+            out=$(timeout 300 wt remove -C "$repo" --foreground --yes -D "$br" 2>&1)
+            if git -C "$repo" show-ref --verify --quiet "refs/heads/$br"; then
+              printf '    ✗ 消せなかった: %s\n' "$(wt_reason "$out")"
+            else
+              EXTRA+=("$repo"$'\t'"$br")
+              printf '    ✓ 削除した\n'
+            fi ;;
+          *) ;;
+        esac
+      done
+
+      if [ "${#EXTRA[@]}" -gt 0 ]; then
+        echo
+        echo "追加で削除: ${#EXTRA[@]}本"
+        printf '%s\n' "${EXTRA[@]}" | sort | print_grouped "✓"
+      else
+        echo
+        echo "追加で削除したものはない"
+      fi ;;
+    *) ;;
+  esac
+fi
+
+# 直前の [ ... ] && ... が偽だと終了コードが 1 になる。掃除そのものは成功しているので
+# ここで潰す。異常時は上流の exit 1 / exit 2 で既に抜けている。
+exit 0

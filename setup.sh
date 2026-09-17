@@ -91,6 +91,7 @@ create_symlink "$DOTFILES_DIR/.zshrc"  "$HOME/.zshrc"
 create_symlink "$DOTFILES_DIR/bin/cc-compose" "$HOME/.local/bin/cc-compose"
 create_symlink "$DOTFILES_DIR/bin/herdr-keys" "$HOME/.local/bin/herdr-keys"
 create_symlink "$DOTFILES_DIR/bin/reviewr-toggle" "$HOME/.local/bin/reviewr-toggle"
+create_symlink "$DOTFILES_DIR/bin/branch-sweep" "$HOME/.local/bin/branch-sweep"
 # herdr: $XDG_CONFIG_HOME/herdr をディレクトリごとリンクする。
 # log/socket/session.json は herdr 自身が同ディレクトリに置くため .gitignore で除外済み。
 # config.toml 単体をここでリンクしてはいけない(リンク元とリンク先が同一パスになり自己参照で壊れる)。
