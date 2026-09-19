@@ -165,12 +165,15 @@ generate_settings() {
     echo "jq が無いため $out を生成できません(jq 導入後に再実行)" >&2
     return 1
   fi
-  if [ ! -f "$base" ]; then
-    echo "settings base 不在: $base" >&2
+  # baseline の settings.json は 2026-09-11 に ~/claude から撤去された(設定は dotfiles 側へ一本化)。
+  # base が無くても override 単体で生成する。両方無いときだけ失敗させる。
+  local inputs=()
+  [ -f "$base" ] && inputs+=("$base")
+  [ -f "$override" ] && inputs+=("$override")
+  if [ ${#inputs[@]} -eq 0 ]; then
+    echo "settings のソースが無い: $base / $override" >&2
     return 1
   fi
-  local inputs=("$base")
-  [ -f "$override" ] && inputs+=("$override")
   local merge_prog='def m($a;$b):
     if   ($a|type)=="object" and ($b|type)=="object"
     then reduce ($b|keys_unsorted[]) as $k ($a; .[$k] = m(.[$k]; $b[$k]))
@@ -188,6 +191,17 @@ generate_settings() {
     rm -f "$tmp"
     return 1
   fi
+}
+
+# i-have-adhd の always-on フラグ。
+# このプラグインの SessionStart フックは、フラグが在るときだけ SKILL.md 本文を注入する。
+# ファイルなので settings では宣言できず、ここで作る。プラグイン本体の有効化は
+# claude/settings.override.json の enabledPlugins。
+# 止めたいときはこのファイルを消す(セッション内なら「stop adhd mode」)。
+enable_adhd_always_on() {
+  local flag="$CLAUDE_OUT_DIR/.i-have-adhd-always"
+  [ -f "$flag" ] && return 0
+  : > "$flag" && echo "生成: $flag (i-have-adhd always-on)"
 }
 
 # skills: 実ディレクトリ ＋ 個別 symlink(baseline ＋ 個人)。
@@ -303,6 +317,7 @@ setup_claude() {
   link_skills
   link_hooks
   link_agents
+  enable_adhd_always_on
 
   # personal-context 連携は 2026-08-02 に撤去(コンテキスト削減)。
   #   - commands の whole-dir symlink をやめた(11 個のスラッシュコマンドは personal-context
