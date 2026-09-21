@@ -1,84 +1,65 @@
-vim.fn.jobstart({"bash", "-c", "if command -v ruby >/dev/null 2>&1 && command -v gem >/dev/null 2>&1; then gem install solargraph; fi"})
-
 -- nvim-cmp 本体の定義は plugins/cmp.lua に一本化している
 return {
-  -- (1) Mason.nvim プラグイン
+  -- LSP サーバーのインストーラ
   {
     "williamboman/mason.nvim",
     cmd = "Mason",
-    config = function()
-      require("mason").setup()
-    end,
+    opts = {},
   },
 
-  -- (2) mason-lspconfig.nvim プラグイン
+  -- mason.nvim の後にロードされる必要がある。
+  -- setup() は nvim-lspconfig 側の config で 1 度だけ呼ぶ(二重呼び出し防止)
   {
     "williamboman/mason-lspconfig.nvim",
+    dependencies = { "williamboman/mason.nvim" },
+  },
+
+  -- LSP サーバー定義の提供元。実際の起動は mason-lspconfig v2 が
+  -- ensure_installed のサーバーを自動 vim.lsp.enable() することで行われる
+  {
+    "neovim/nvim-lspconfig",
     dependencies = {
-      "williamboman/mason.nvim",
+      "williamboman/mason-lspconfig.nvim",
+      "hrsh7th/cmp-nvim-lsp", -- nvim-cmpとの連携用
+      "j-hui/fidget.nvim",    -- LSPの進捗状況表示用
     },
     config = function()
+      -- 自動 enable より前に設定しておく必要がある
+
+      -- 全サーバーへ nvim-cmp の補完 capabilities を適用
+      vim.lsp.config("*", {
+        capabilities = require("cmp_nvim_lsp").default_capabilities(),
+      })
+
+      -- lua_ls: vim グローバルを未定義扱いにしない
+      vim.lsp.config("lua_ls", {
+        settings = {
+          Lua = {
+            diagnostics = {
+              globals = { "vim" },
+            },
+          },
+        },
+      })
+
       require("mason-lspconfig").setup({
-        -- ここに自動インストールしたいLSPサーバーを記述
         ensure_installed = {
           "lua_ls",
           "html",
           "cssls",
           "jsonls",
           "ts_ls",
+          "perlnavigator",
+          "pyright",
           "jdtls",
         },
       })
     end,
   },
 
-  -- (3) nvim-lspconfig プラグイン TODO: lspconfigがエラー吐いてたから使用箇所でコメントアウトしている
+  -- LSP の進捗表示(noice 側の lsp.progress は無効にしてこちらへ寄せている)
   {
-    "neovim/nvim-lspconfig",
-    dependencies = {
-      "williamboman/mason-lspconfig.nvim",
-      "hrsh7th/cmp-nvim-lsp", -- nvim-cmpとの連携用
-      "j-hui/fidget.nvim", -- LSPの進捗状況表示用
-    },
-
-    config = function()
-    --local lspconfig = require("lspconfig")
-    local mason_lspconfig = require("mason-lspconfig")
-
-    -- mason-lspconfig: サーバーのインストールを保証
-    mason_lspconfig.setup({
-      ensure_installed = {
-        "lua_ls",
-        "html",
-        "cssls",
-        "jsonls",
-        "ts_ls",
-        "perlnavigator",
-        "pyright",
-        "jdtls",
-      },
-    })
-
-    -- LSP設定（nvim-cmp連携）
-    local capabilities = vim.lsp.protocol.make_client_capabilities()
-    capabilities = vim.tbl_deep_extend("force", capabilities, require("cmp_nvim_lsp").default_capabilities())
-
-    -- lua_ls の特別な設定
-    --lspconfig.lua_ls.setup({
-      --capabilities = capabilities,
-      --settings = {
-        --Lua = {
-          --diagnostics = {
-            --globals = { "vim" },
-          --},
-        --},
-      --},
-    --})
-
-      -- その他のサーバーはデフォルト設定
-      --for _, server in ipairs({ "html", "cssls", "jsonls", "ts_ls" }) do
-        --lspconfig[server].setup({ capabilities = capabilities })
-      --end
-    end,
+    "j-hui/fidget.nvim",
+    opts = {},
   },
 }

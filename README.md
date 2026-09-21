@@ -10,6 +10,7 @@
 - [管理対象](#管理対象)
 - [Claude Code 設定](#claude-code-設定)
 - [プロンプト下書きペイン(herdr)](#プロンプト下書きペインherdr)
+- [herdr プラグイン](#herdr-プラグイン)
 - [リモート herdr の常駐(herdr-mirror)](#リモート-herdr-の常駐herdr-mirror)
 - [private リポジトリ](#private-リポジトリ)
 
@@ -48,6 +49,7 @@ git clone https://github.com/taku-enginner/dotfiles.git && \
 6. mise を導入(未導入時・確認のうえ)
 7. `mise install`(config.toml に基づくツール導入)
 8. private リポを HTTPS で clone(未取得時・確認のうえ。失敗しても汎用設定は維持)
+9. herdr プラグインの未導入分を一覧表示(導入はしない・[herdr プラグイン](#herdr-プラグイン))
 
 ## 管理対象
 
@@ -108,6 +110,53 @@ Claude Code の Ctrl-G(外部エディタ)は**使わない**。claude 自身が
 - 実装: `bin/cc-compose`(ペイン分割)、`nvim/lua/config/herdr.lua`(`:CcSend` / `:CcSubmit`)
 - 送信キーを変えるときは `claude/keybindings.json` と `nvim/lua/config/herdr.lua` の `SUBMIT_KEY` を揃える
 
+## herdr プラグイン
+
+herdr **本体**には**プラグインを宣言的に管理する仕組みが無い**。config での宣言・lockfile・sync のいずれも提供されず、[公式ドキュメント](https://herdr.dev/docs/plugins/)の通り導入状態は "global to the current user" = そのマシンのそのユーザーに閉じる。加えて実体とレジストリ(`plugins.json`)は herdr が管理するため追跡できず、「どれを使っているか」がリポジトリに残らない。その穴を **`herdr-lazy`(宣言リスト + lock)** と、それが扱えない分を見る **`setup.sh` の一覧**の二段で埋める。
+
+| `plugin_id` | 指定子 | 管理 | 用途 |
+| --- | --- | --- | --- |
+| `worktrunk` | `devashish2203/herdr-worktrunk` | list | worktree の切替・作成・削除 |
+| `persiyanov.reviewr` | `persiyanov/herdr-reviewr` | list | 差分を横で review してコメントを入力欄へ |
+| `gh-pr` | `wyattjoh/herdr-plugin-gh-pr` | list | ブランチの PR ステータスをサイドバーに表示(`gh` 認証が必要) |
+| `mirror` | `nikok6/herdr-mirror` | list | リモート herdr をローカルにミラー(SSH 非対話鍵認証が必要) |
+| `herdr-lazy` | `natori-hrj/herdr-lazy` | list | プラグイン構成を `plugins.list` で宣言し `plugins.lock` で固定 |
+| `dutifuldev.ghzinga` | `osolmaz/ghzinga/plugins/herdr` | setup.sh | PR/Issue を TUI で開く(本体 `gzg` が必要) |
+
+### herdr-lazy
+
+`herdr/plugins.list` に `owner/repo` を並べたものが宣言、`herdr/plugins.lock` が解決済みコミットの記録。置き場所は `.zshrc` の `HERDR_LAZY_LIST` で dotfiles 側に寄せてある(既定はプラグインの config-dir 配下 = リポジトリに残らない)。lock は list の隣に自動生成されるので、この 1 変数で両方が追跡対象になる。
+
+| 操作 | コマンド |
+| --- | --- |
+| 不足分を入れる / ずれた pin を戻す | `herdr-lazy install` |
+| リストに収束させる | `herdr-lazy sync` |
+| lock のコミットへ戻す | `herdr-lazy restore` |
+| pin なしを最新へ | `herdr-lazy update` |
+| 管理ペイン(`prefix+shift+l`) | `herdr-lazy ui` |
+
+- **`herdr-lazy` は PATH に載らない**。実体は herdr のプラグインディレクトリの中で、名前に install ごとのハッシュが入るため symlink 先を固定できない。`zsh/functions.zsh` の同名関数が実体を glob で引いて渡す。本家 README は `herdr plugin list --json` を python で舐める関数を提示しているが、その JSON は `{result:{plugins:[…]}}` 形式で herdr 0.7.5 が返すトップレベル配列と噛み合わないため採らない(herdr CLI の出力仕様に依存しないのは `setup.sh` と同じ方針)
+- **`--prune` を打たない限り既存プラグインは消えない**。`sync --prune` はリスト外を削除するので、`ghzinga` を巻き込む。使わない
+- リストの書式は `owner/repo` / `owner/repo@v1.2.0` / `owner/repo@9f3c1ab` のみ。**`owner/repo/subdir` は非対応**なので `ghzinga` は載せられず、`setup.sh` の一覧に残してある
+- 既定バンドル(`herdr-plus` 等 5 件)を勝手に入れる初回ブートストラップは `HERDR_LAZY_NO_BOOTSTRAP=1`(`.zshrc`)で止めている。入れる物はこちらで決める
+- キーバインドは herdr-lazy に自動追記させず `herdr/config.toml` に手書きする。`config.toml` は dotfiles への symlink で、ツールに書かせるとリンクを壊しうるため
+
+`setup.sh` は**未導入分を表示するだけで導入はしない**。理由は ① herdr CLI の引数仕様に依存しない(`list` を読むだけで `install` を打たない。`install` は `-y` を指定子の前に置くと usage エラーになるなど癖がある) ② rust の一時取得や `rm -rf` を `setup.sh` に持ち込まない ③ 「使うときにセットアップする」運用に合う。目的は入れ忘れの検出で、それは表示で足りる。導入は出力をコピペする。
+
+導入済み判定は `plugin_id` の**厳密一致**(`gh-pr`・`worktrunk` は素の id だが `persiyanov.reviewr`・`dutifuldev.ghzinga` は「作者.名前」形式。前方一致では取りこぼす)。`plugin_id` はリポジトリ名と一致しない(`nikok6/herdr-mirror` → `mirror`)ので、追加するときは `herdr plugin list --json` で実測する。なお herdr は 0 件のとき `--json` でも JSON を返さず `No plugins installed.` を出すため、「0 件」と「herdr が応答しない」は終了コードで区別している。
+
+`ghzinga` だけは本体 `gzg` を先に入れる必要がある(プラグインは `gzg` を呼ぶ薄いガワ。配布はソースのみで `cargo install` が唯一の入手経路)。出来たバイナリは Rust std を静的リンクしており実行に rust は不要なので、rust はビルド時だけ借りて捨てられる:
+
+```
+mise x rust@latest -- cargo install --root "$HOME/.local" ghzinga
+mise uninstall --all rust && rm -rf ~/.cargo/registry   # rust を捨てる場合
+```
+
+`--root` を渡すのは、既定の `~/.cargo/bin` を `.zshrc` で PATH に入れていないため。
+
+`$XDG_CONFIG_HOME/herdr` は**実ディレクトリ**にし、`config.toml` だけを個別 symlink する(skills / hooks と同じ方式)。ディレクトリごと symlink にしてはいけない — herdr は config と同じディレクトリに `plugins.json` とプラグイン実体を書くため、① 公開リポの作業ツリーに実体が落ちる ② 追跡外にすると新マシンで実体が無い ③ `setup.sh` 再実行時に `create_symlink` が実ディレクトリを `rm -rf` してプラグインが全消えする、を招く(2026-07-30 に③で実際に消失させた)。
+
+`mirror` の対象ホストは `~/.config/herdr/plugins/config/mirror/hosts.toml` で定義する(公開リポなので追跡しない)。`herdr/config.toml` に `mirror.*` のキーバインドを割り当て済み。
 ## リモート herdr の常駐(herdr-mirror)
 
 `herdr-mirror` プラグインがリモート(`tak.moove.bz`)の workspace/agent をローカルのサイドバーへミラーする。前提は「**リモートで herdr server が動いていること**」の一点で、ここが落ちると `prefix+alt+n`(リモートに workspace を作る)などのリモート系キーが軒並み無反応になる。

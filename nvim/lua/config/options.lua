@@ -15,7 +15,9 @@ vim.opt.autoread = true
 vim.opt.number = true
 vim.opt.cursorline = true
 vim.opt.signcolumn = "yes"
-vim.opt.shiftwidth = 4
+-- 既定は 2 インデント(python/perl のみ config/autocmds.lua で 4 に上書き)
+vim.opt.tabstop = 2
+vim.opt.shiftwidth = 2
 vim.opt.expandtab = true
 
 vim.opt.clipboard = "unnamedplus"
@@ -90,14 +92,13 @@ vim.opt.listchars:append("eol:↴")
 vim.opt.listchars:append("tab:▸ ")
 vim.opt.listchars:append("trail:•")
 
--- treesitter用の設定
-vim.o.foldmethod = "expr"
-vim.o.foldexpr = "nvim_treesitter#foldexpr()"
-vim.o.foldlevel = 99 -- デフォルトで全て展開
-
 -- ファイルタイプの追加
 vim.filetype.add({
   extension = {
     ddl = 'sql',
+    -- 組み込み判定は .tf の中身を見て決めるため、空の新規ファイルが
+    -- TF(MUD クライアント言語)の ft=tf に落ちて HCL のインデントが効かない。
+    -- 拡張子で terraform に固定する。
+    tf = 'terraform',
   },
 })

@@ -109,6 +109,15 @@ export NVM_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"                   # nvm 本体
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" # nvm 補完
 
+# herdr-lazy: herdr のプラグイン構成を plugins.list(宣言)+ plugins.lock(コミット固定)で管理する。
+# 既定では list をプラグインの config-dir に置く = リポジトリに残らないため、dotfiles 側へ逃がす。
+# lock は list の隣に自動生成されるので、この 1 変数で両方が追跡対象になる。
+# NO_BOOTSTRAP: 「list が無く herdr-lazy 以外未導入」のマシンで既定バンドル 5 件を勝手に入れる
+# 初回ブートストラップを止める。導入済みの環境では発動しないが、新マシンで setup.sh より先に
+# herdr が起動すると条件を満たしうるため明示的に殺しておく(入れる物はこちらで決める)。
+export HERDR_LAZY_LIST="$DOTFILES_DIR/herdr/plugins.list"
+export HERDR_LAZY_NO_BOOTSTRAP=1
+
 # ── エディタ ──
 # nvim は mise 管理のため、mise activate で PATH が通った後でないと type で検出できない。
 # このブロックをツール初期化より前に置くと必ず vim へ落ちるので順序を動かさないこと。

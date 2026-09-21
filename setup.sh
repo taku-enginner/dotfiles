@@ -43,6 +43,13 @@ create_symlink() {
   echo "シンボリックリンクを作成しました: $dst -> $src"
 }
 
+# 丸ごと symlink を実ディレクトリへ置換(複数ソースから個別 link する / ツールの生成物を
+# リポジトリの作業ツリーに落とさないため)。herdr・Claude の skills/hooks が使う。
+ensure_real_dir() {
+  [ -L "$1" ] && rm -f "$1"
+  mkdir -p "$1"
+}
+
 install_sheldon() {
   curl --proto '=https' -fLsS https://rossmacarthur.github.io/install/crate.sh |
     bash -s -- --repo rossmacarthur/sheldon --to "$HOME/.local/bin"
@@ -92,10 +99,17 @@ create_symlink "$DOTFILES_DIR/bin/cc-compose" "$HOME/.local/bin/cc-compose"
 create_symlink "$DOTFILES_DIR/bin/herdr-keys" "$HOME/.local/bin/herdr-keys"
 create_symlink "$DOTFILES_DIR/bin/reviewr-toggle" "$HOME/.local/bin/reviewr-toggle"
 create_symlink "$DOTFILES_DIR/bin/branch-sweep" "$HOME/.local/bin/branch-sweep"
-# herdr: $XDG_CONFIG_HOME/herdr をディレクトリごとリンクする。
-# log/socket/session.json は herdr 自身が同ディレクトリに置くため .gitignore で除外済み。
-# config.toml 単体をここでリンクしてはいけない(リンク元とリンク先が同一パスになり自己参照で壊れる)。
-create_symlink "$DOTFILES_DIR/herdr" "$XDG_CONFIG_HOME/herdr"
+# herdr: $XDG_CONFIG_HOME/herdr は実ディレクトリにし、config.toml だけを個別 symlink する。
+# ディレクトリごと symlink にしてはいけない。herdr は config と同じディレクトリに
+# plugins.json とプラグイン実体(plugins/ 配下の git checkout)を書くため、
+#   ① 公開リポである dotfiles の作業ツリーにプラグイン実体が落ちる
+#   ② それを .gitignore で追跡外にすると、新マシンや削除後に実体が無い状態になる
+#   ③ setup.sh 再実行時に create_symlink が実ディレクトリを rm -rf し、プラグインが全消えする
+# を招く(2026-07-30 に③で実際に消失させた)。skills/hooks と同じ「実dir＋個別link」に揃える。
+# なお実ディレクトリ化が先に必要で、symlink のまま config.toml を張ると
+# リンク元とリンク先が同一パスに解決されて自己参照で壊れる。
+ensure_real_dir "$XDG_CONFIG_HOME/herdr"
+create_symlink "$DOTFILES_DIR/herdr/config.toml" "$XDG_CONFIG_HOME/herdr/config.toml"
 
 # herdr のヘッドレスサーバ用 systemd user unit。
 # systemd の user manager は PAM 経由で起動するため ~/.zshenv の XDG_CONFIG_HOME を知らない。
@@ -126,14 +140,8 @@ CLAUDE_BASE_DIR="${CLAUDE_BASE_DIR:-$HOME/claude}"          # 会社 baseline(�
 CLAUDE_PERSONAL_DIR="$DOTFILES_DIR/claude"                 # 個人設定(このリポ)
 CLAUDE_OUT_DIR="$HOME/.claude"                             # 組み立て先
 
-# 丸ごと symlink を実ディレクトリへ置換(baseline と個人の両ソースから個別 link するため)
-ensure_real_dir() {
-  [ -L "$1" ] && rm -f "$1"
-  mkdir -p "$1"
-}
-
 # CLAUDE.md: baseline ＋ 個人 override を連結して実ファイル生成。
-# symlink にすると personal-context の ensure-global-rules.sh フックが baseline 本体へ
+# symlink にすると vault の ensure-global-rules.sh フックが baseline 本体へ
 # 追記して汚染するため、必ず実ファイルにする。
 generate_claude_md() {
   local base="$CLAUDE_BASE_DIR/CLAUDE.md"
@@ -431,3 +439,94 @@ elif confirm_exe "ccsession を clone してビルドしますか?"; then
     echo "警告: go が見つからず ccsession をビルドできません(mise で go を導入してください)。" >&2
   fi
 fi
+
+# ============================================================
+# herdr プラグイン(使っているものを列挙し、未導入なら一覧で知らせる)
+#   - herdr にはプラグインを宣言的に管理する仕組みが無い。config での宣言・lockfile・sync の
+#     いずれも提供されず、導入状態は「そのマシンのそのユーザー」に閉じる。加えて実体と
+#     レジストリ(plugins.json)は herdr が管理するため追跡できず、「どれを使っているか」が
+#     リポジトリに残らない。その穴をこの一覧で埋める。
+#   - 導入はせず表示だけに留める:
+#       ① herdr CLI の引数仕様に依存しない(list を読むだけで install を打たない)
+#       ② rust の一時取得や rm -rf といった重い/破壊的な処理を setup.sh に持ち込まない
+#       ③ 「使うときにセットアップする」運用に合う(常に全部入れる必要はない)
+#     目的は入れ忘れの検出であり、それは表示で足りる。導入は出力をコピペする。
+#   - 判定は plugin_id の厳密一致。gh-pr / worktrunk は素の id だが
+#     persiyanov.reviewr / dutifuldev.ghzinga は「作者.名前」形式のため前方一致では取りこぼす。
+#     plugin_id はリポジトリ名と一致しない(nikok6/herdr-mirror -> mirror)ので、
+#     追加するときは herdr plugin list --json で実測する。
+# ============================================================
+
+# 使っているプラグイン: plugin_id|install 指定子(OWNER/REPO[/SUBDIR])|用途
+herdr_plugins=(
+  "worktrunk|devashish2203/herdr-worktrunk|worktree の切替・作成・削除"
+  "persiyanov.reviewr|persiyanov/herdr-reviewr|差分を横で review してコメントを入力欄へ"
+  "gh-pr|wyattjoh/herdr-plugin-gh-pr|ブランチの PR ステータスをサイドバーに表示(gh 認証が必要)"
+  "mirror|nikok6/herdr-mirror|リモート herdr をローカルにミラー(SSH 非対話鍵認証が必要)"
+  "dutifuldev.ghzinga|osolmaz/ghzinga/plugins/herdr|PR/Issue を TUI で開く(本体 gzg が必要)"
+)
+
+setup_herdr_plugins() {
+  if ! command -v herdr >/dev/null 2>&1; then
+    echo "herdr が見つからないため herdr プラグインの確認をスキップ"
+    return 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "jq が無いため herdr プラグインの確認をスキップ(jq 導入後に再実行)" >&2
+    return 0
+  fi
+  # 「1つも入っていない(新マシン・全消し後)」と「判定不能(herdr が応答しない)」を区別する。
+  # herdr は 0 件のとき --json でも JSON 配列を返さず "No plugins installed." を出すため、
+  # JSON かどうかでは区別できない。終了コードで判断し、成功していれば非 JSON は 0 件として扱う。
+  local rc=0 json=""
+  json=$(herdr plugin list --json 2>/dev/null) || rc=$?
+  if [ "$rc" != 0 ]; then
+    echo "警告: herdr の状態を取得できないため herdr プラグインの確認をスキップします(exit=$rc)" >&2
+    echo "  → 確認: herdr plugin list" >&2
+    return 0
+  fi
+  if ! printf '%s' "$json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    json='[]'
+  fi
+
+  local -a missing_specs=() missing_lines=()
+  local entry id spec note ghzinga_missing=0
+  for entry in "${herdr_plugins[@]}"; do
+    local -a parts=("${(@s:|:)entry}")
+    id=${parts[1]} spec=${parts[2]} note=${parts[3]}
+    if printf '%s' "$json" | jq -e --arg id "$id" 'any(.[]; .plugin_id == $id)' >/dev/null 2>&1; then
+      continue
+    fi
+    missing_specs+=("$spec")
+    missing_lines+=("$(printf '  %-19s %s' "$id" "$note")")
+    if [ "$id" = dutifuldev.ghzinga ]; then
+      ghzinga_missing=1
+    fi
+  done
+
+  if [ ${#missing_specs[@]} -eq 0 ]; then
+    echo "herdr プラグイン: ${#herdr_plugins[@]} 件すべて導入済み"
+    return 0
+  fi
+
+  local line s
+  echo "未導入の herdr プラグイン(${#missing_specs[@]}/${#herdr_plugins[@]}):"
+  for line in "${missing_lines[@]}"; do
+    echo "$line"
+  done
+  echo "  → 導入するなら:"
+  for s in "${missing_specs[@]}"; do
+    echo "      herdr plugin install $s"
+  done
+  echo "      herdr server reload-config"
+  # ghzinga のプラグインは本体 gzg を呼ぶだけの薄いガワで、配布はソースのみ(cargo install が唯一の
+  # 入手経路)。出来たバイナリは Rust std を静的リンクするため実行に rust は不要 = ビルド時だけ借りる。
+  # --root を渡すのは、既定の ~/.cargo/bin を .zshrc で PATH に入れていないため。
+  if [ "$ghzinga_missing" = 1 ] && ! command -v gzg >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/gzg" ]; then
+    echo "    ghzinga は先に本体 gzg が必要(rust はビルド時のみ):"
+    echo "      mise x rust@latest -- cargo install --root \"\$HOME/.local\" ghzinga"
+    echo "      mise uninstall --all rust && rm -rf ~/.cargo/registry   # rust を捨てる場合"
+  fi
+}
+
+setup_herdr_plugins

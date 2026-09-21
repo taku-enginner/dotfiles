@@ -124,3 +124,23 @@ function frds() {
 
   MYSQL_PWD="$db_pass" mysql -h 127.0.0.1 -P "$local_port" -u "$db_user"
 }
+
+# === herdr ===
+
+# herdr-lazy: プラグイン構成の宣言的管理(plugins.list / plugins.lock)。
+# 実体は herdr のプラグインディレクトリの中で、名前に install ごとのハッシュが入るため
+# PATH には載らない(symlink する先が固定できない)。本家 README は
+# `herdr plugin list --json` を python で舐める関数を提示しているが、その JSON は
+# {result:{plugins:[…]}} 形式で、herdr 0.7.5 が返すトップレベル配列とは噛み合わない。
+# ここでは herdr CLI の出力仕様に一切依存せず、実体を直接 glob で引く(setup.sh と同じ方針)。
+# glob qualifier: N=無マッチなら空 / -=symlink を解決 / *=実行可能 / om=更新時刻降順。
+# 再インストールで旧ハッシュのディレクトリが残っても、最新の 1 件を選ぶので追随する。
+herdr-lazy() {
+  local -a bins
+  bins=("${XDG_CONFIG_HOME:-$HOME/.config}"/herdr/plugins/*/herdr-lazy-*/target/release/herdr-lazy(N-*om))
+  if (( ${#bins} == 0 )); then
+    echo "herdr-lazy の実体が見つかりません。導入: herdr plugin install natori-hrj/herdr-lazy" >&2
+    return 1
+  fi
+  "${bins[1]}" "$@"
+}

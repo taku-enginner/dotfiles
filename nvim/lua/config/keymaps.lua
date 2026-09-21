@@ -3,8 +3,9 @@
 vim.keymap.set("n", "P", "P`]", { desc = "Paste and move to the end" })
 vim.keymap.set("n", "p", "p`]", { desc = "Paste and move to the end" })
 vim.keymap.set('n', '<leader>p', ':echo expand(\'%\')<CR>', { desc = '現在のファイルパスをメッセージに表示' })
-vim.keymap.set('n', '<leader>j', ':bprev<CR>', { desc = '前のバッファに移動' })
-vim.keymap.set('n', '<leader>k', ':bnext<CR>', { desc = '次のバッファに移動' })
+-- バッファ移動は bufferline のタブ並び順に合わせる(bufferline 側にキーマップは置かない)
+vim.keymap.set('n', '<leader>j', '<cmd>BufferLineCyclePrev<CR>', { desc = '前のバッファに移動' })
+vim.keymap.set('n', '<leader>k', '<cmd>BufferLineCycleNext<CR>', { desc = '次のバッファに移動' })
 vim.keymap.set('n', '<leader>e', ':NvimTreeToggle<CR>', { desc = 'ファイルツリー表示' })
 
 -- コメントトグル(旧 nerdcommenter <leader>c<Space> の代替。組み込み gc へ委譲)
