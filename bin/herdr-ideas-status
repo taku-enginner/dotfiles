@@ -1,66 +1,17 @@
 #!/usr/bin/env bash
-# ideas の未消化件数と「高」3件を herdr のサイドバーに出す。
+# ideas の未消化件数と「高」3件を herdr のサイドバーに1回だけ書く。
 #
-#   herdr-ideas-status          1回だけ数えて書く
-#   herdr-ideas-status --watch  間隔をあけて繰り返す（既定 600 秒）
+# 実体は herdr-ticker の ideas サブコマンド。常駐（スクロールし続ける）は
+#   herdr-ticker ideas --width 22
+# で、launchd の com.taku.ideas-status がそれを持っている。
+# こちらは「今すぐ反映したい」ときに手で叩く口。
 #
-# 表示は config.toml の [ui.sidebar.spaces] の $ideas / $idea1..3 行。
-# 0 件でも「ideas 0」を書く。値が空だと herdr はその行を描かないので、
-# 書かないと「0 件」と「仕組みが止まっている」が区別できなくなる。
+# 2026-09-23: 走査ロジックをこのファイルから herdr-ticker へ移した。
+# スクロールには常駐が要り、同じ走査を2箇所に置くと片方だけ古くなるため。
 set -uo pipefail
 
 # launchd / cron から呼ばれると PATH が最小構成になる。
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:${PATH:-}"
 
-DIR="${HIS_DIR:-$HOME/vault/takuma/notes/ideas}"
-TICKER="${HIS_TICKER:-$HOME/dotfiles/bin/herdr-ticker}"
-INTERVAL="${HIS_INTERVAL:-600}"
-WIDTH="${HIS_WIDTH:-22}"          # タイトルの表示幅（全角換算）
-
-report() {
-  python3 - "$DIR" "$TICKER" "$WIDTH" <<'PY'
-import pathlib, re, subprocess, sys, unicodedata
-
-d, ticker, width = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
-
-def head(p):                       # frontmatter だけ見る（本文の同名行を拾わない）
-    return "".join(p.read_text(encoding="utf-8").splitlines(keepends=True)[:8])
-
-def cut(s, w):                     # 全角を2幅として詰める
-    out, n = "", 0
-    for ch in s:
-        c = 2 if unicodedata.east_asian_width(ch) in "WF" else 1
-        if n + c > w:
-            return out + "…"
-        out, n = out + ch, n + c
-    return out
-
-opens, highs = 0, []
-for p in sorted(d.glob("*.md")):
-    h = head(p)
-    if not re.search(r"^status: open$", h, re.M):
-        continue
-    opens += 1
-    if re.search(r"^priority: 高$", h, re.M):
-        m = re.search(r"^id:\s*(\d+)", h, re.M)
-        highs.append((int(m.group(1)) if m else 0, p.stem))
-
-highs.sort()                        # id 昇順。並びが日替わりで動かないように
-lines = [f"ideas {opens}  高 {len(highs)}/3"]
-args = ["ideas", lines[0]]
-for i in range(3):                  # 3 枠は固定。空きは「―」で埋めて枠が見えるようにする
-    v = f"#{highs[i][0]} {cut(highs[i][1], width)}" if i < len(highs) else "―"
-    args += [f"idea{i+1}", v]
-    lines.append(v)
-
-for k, v in zip(args[::2], args[1::2]):
-    subprocess.run([ticker, "set", k, v], check=False)
-print("\n".join(lines))
-PY
-}
-
-if [ "${1:-}" = "--watch" ]; then
-  while :; do report; sleep "$INTERVAL"; done
-else
-  report
-fi
+exec "${HIS_TICKER:-$HOME/dotfiles/bin/herdr-ticker}" ideas --once \
+  --width "${HIS_WIDTH:-22}" "$@"

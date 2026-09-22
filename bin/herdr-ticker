@@ -26,6 +26,7 @@ import base64
 import fcntl
 import json
 import os
+import pathlib
 import re
 import shutil
 import signal
@@ -41,11 +42,14 @@ import urllib.request
 SEPARATOR = "   ♪   "  # スクロールの折り返し部分に挟む区切り
 SIDEBAR_MARGIN = 2  # サイドバー幅のうち行テキストに使えない分（インデント + 右余白）
 FALLBACK_WIDTH = 16  # サイドバー幅を検出できなかったときの保険
+MIN_DETECTED_WIDTH = 8  # これを割ったら検出失敗とみなす（下の detect_width 参照）
 DEFAULT_INTERVAL = 0.3  # スクロールを 1 桁進める間隔（秒）
 DEFAULT_POLL = 2.0  # 再生中曲を取り直す間隔（秒）
 DEFAULT_GMAIL_POLL = 60.0  # Gmail の未読件数を取り直す間隔（秒）
 DEFAULT_SLACK_POLL = 60.0  # Slack のメンションを取り直す間隔（秒）
 DEFAULT_SLACK_SLOTS = 5  # config.toml に用意したチャネル名スロットの数
+DEFAULT_IDEAS_POLL = 600.0  # ideas を数え直す間隔（秒）。1日数件しか動かない
+DEFAULT_IDEAS_SLOTS = 3  # config.toml に用意した $idea1..3 のスロット数
 SLACK_NAME_TTL = 6 * 3600  # ID→名前キャッシュを作り直す間隔（秒）
 WORKSPACE_RETRY = 5.0  # herdr の応答が無いときに待ち直す間隔（秒）
 
@@ -61,6 +65,9 @@ SEP_SOURCE = "ticker-sep"
 ARTIST_TOKEN = "artist"
 TITLE_TOKEN = "title"
 GMAIL_TOKEN = "gmail"
+IDEAS_TOKEN = "ideas"  # 件数の行。短いのでスクロールしない
+IDEAS_SEPARATOR = "   ・   "  # ideas のスクロール折り返し（♪ は曲のもの）
+IDEAS_DIR = "~/vault/takuma/notes/ideas"
 SLACK_LABEL_TOKEN = "slack"
 SLACK_LABEL = "Slack Mentions"
 SLACK_ARCHIVED_LABEL = "Slack  アーカイブ {}"  # 「後で」タブのアーカイブ済み件数
@@ -127,11 +134,11 @@ def clip(text, width):
     return "".join(out) + " " * (width - used)
 
 
-def window(text, offset, width):
+def window(text, offset, width, sep=SEPARATOR):
     """スクロール位置 offset における表示内容を返す。収まる文字列は動かさない。"""
     if not text or text_width(text) <= width:
         return text
-    loop = text + SEPARATOR
+    loop = text + sep
     i = offset % len(loop)
     # 窓が末尾を跨いでも埋まるよう 1 周ぶん連結してから切り出す
     return clip(loop[i:] + loop, width)
@@ -170,7 +177,11 @@ def detect_width():
         sidebar = min(l["area"]["x"] for l in layouts if l.get("area"))
     except (KeyError, ValueError, json.JSONDecodeError):
         return FALLBACK_WIDTH
-    return max(1, sidebar - SIDEBAR_MARGIN)
+    # ⚠️ herdr 0.9.1(Mac)はペイン座標をサイドバーを除いて返すので x が常に 0 になる。
+    # そのまま引くと幅 1 になり、1 桁ずつしか出ない。読める下限を割ったら
+    # 検出できなかったものとして扱う（畳んだサイドバーも同じ扱いでよい）。
+    width = sidebar - SIDEBAR_MARGIN
+    return width if width >= MIN_DETECTED_WIDTH else FALLBACK_WIDTH
 
 
 def list_workspaces():
@@ -573,6 +584,89 @@ def slack(slots, poll):
         time.sleep(poll)
 
 
+# --- ideas（vault の未消化件数と「高」3件） --------------------------------
+
+
+def read_ideas(path):
+    """(open の件数, [(id, タイトル), ...]) を返す。高は id 昇順。
+
+    frontmatter だけ見る。本文に同じ書式の行があっても拾わない。
+    """
+    opens, highs = 0, []
+    for f in sorted(pathlib.Path(path).glob("*.md")):
+        try:
+            head = "".join(f.read_text(encoding="utf-8").splitlines(True)[:8])
+        except OSError:
+            continue
+        if not re.search(r"^status: open$", head, re.M):
+            continue
+        opens += 1
+        if re.search(r"^priority: 高$", head, re.M):
+            m = re.search(r"^id:\s*(\d+)", head, re.M)
+            highs.append((int(m.group(1)) if m else 0, f.stem))
+    highs.sort()
+    return opens, highs
+
+
+def ideas_rows(opens, highs, slots):
+    """件数の行と、スロット数ぶんの「高」の行を返す。
+
+    枠が空いていても行は書く。値が空だと herdr はその行を描かないので、
+    書かないと「0 件」と「仕組みが止まっている」が区別できなくなる。
+    """
+    rows = ["ideas {}  高 {}/{}".format(opens, len(highs), slots)]
+    for i in range(slots):
+        rows.append(
+            "#{} {}".format(highs[i][0], highs[i][1]) if i < len(highs) else "―"
+        )
+    return rows
+
+
+def ideas(slots, width, interval, poll, once=False):
+    """未消化件数と「高」のタイトルを流し続ける。
+
+    タイトルは省略せず横スクロールさせる（`window` が幅に収まるものは動かさない）。
+    """
+    path = os.path.expanduser(os.environ.get("HERDR_IDEAS_DIR", IDEAS_DIR))
+    tokens = [IDEAS_TOKEN] + ["idea{}".format(i + 1) for i in range(slots)]
+
+    if once:
+        rows = ideas_rows(*read_ideas(path), slots=slots)
+        set_tokens(wait_for_workspace(), dict(zip(tokens, rows)))
+        print("\n".join(rows))
+        return
+
+    state = {"ws": wait_for_workspace(), "rows": ideas_rows(*read_ideas(path), slots=slots)}
+    install_cleanup(state, tokens)
+
+    def poller():
+        # 数え直しはディスクを舐めるので別スレッドに逃がす。
+        # ワークスペースの引き直しもここでやる（スクロールの刻みでやると
+        # herdr の起動回数が倍になる）。
+        while True:
+            time.sleep(poll)
+            state["rows"] = ideas_rows(*read_ideas(path), slots=slots)
+            ws = resolve_workspace()
+            if ws:
+                state["ws"] = ws
+
+    threading.Thread(target=poller, daemon=True).start()
+
+    shown, offset = None, 0
+    while True:
+        rows = state["rows"]
+        if rows != shown:
+            offset = 0  # 中身が変わったら先頭から流し直す
+            shown = rows
+        set_tokens(state["ws"], {
+            # 件数の行は幅に収まるので window を通しても動かない
+            t: window(r, offset, width, IDEAS_SEPARATOR)
+            for t, r in zip(tokens, rows)
+        })
+        offset += 1
+        time.sleep(interval)
+
+
 # --- エントリポイント -------------------------------------------------------
 
 
@@ -609,6 +703,17 @@ def main():
         help="config.toml に用意したチャネル名スロットの数",
     )
 
+    p_ideas = sub.add_parser("ideas", help="ideas の件数と「高」3件を流し続ける")
+    p_ideas.add_argument("--poll", type=float, default=DEFAULT_IDEAS_POLL)
+    p_ideas.add_argument("--slots", type=int, default=DEFAULT_IDEAS_SLOTS)
+    p_ideas.add_argument(
+        "--width", type=int, help="省略時はサイドバー幅から自動判定する"
+    )
+    p_ideas.add_argument("--interval", type=float, default=DEFAULT_INTERVAL)
+    p_ideas.add_argument(
+        "--once", action="store_true", help="1 回だけ書いて終わる（スクロールしない）"
+    )
+
     p_np = sub.add_parser("nowplaying", help="Windows の再生中曲を流し続ける")
     p_np.add_argument(
         "--width", type=int, help="省略時はサイドバー幅から自動判定する"
@@ -632,6 +737,7 @@ def main():
         "gmail": "ticker-gmail",
         "slack": "ticker-slack",
         "nowplaying": "ticker-np",
+        "ideas": "ticker-ideas",
     }.get(args.command, "ticker")
 
     if args.command == "ensure-workspace":
@@ -652,6 +758,10 @@ def main():
         return
     if args.command == "slack":
         slack(args.slots, args.poll)
+        return
+    if args.command == "ideas":
+        width = args.width if args.width is not None else detect_width()
+        ideas(args.slots, width, args.interval, args.poll, args.once)
         return
     if args.command == "nowplaying":
         width = args.width if args.width is not None else detect_width()
