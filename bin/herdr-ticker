@@ -1,0 +1,672 @@
+#!/usr/bin/env python3
+"""herdr のサイドバーに Gmail / Slack / 再生中曲を表示する。
+
+config.toml の `[ui.sidebar.spaces]` に `{ token = "$名前" }` の行を置いておくと、
+ここで設定したトークンがその行に描画される。表示先は専用ワークスペース `notify`
+に固定し、無ければ自動で作る。
+
+  herdr-ticker set gmail "Gmail 12"
+  herdr-ticker scroll title "真夏の果実 (Live at 横浜スタジアム)"
+  herdr-ticker clear artist title
+  herdr-ticker gmail                 # 未読件数を出し続ける（常駐）
+  herdr-ticker slack                 # メンション + アーカイブ済み件数を出し続ける（常駐）
+  herdr-ticker nowplaying            # Windows の再生中曲を流し続ける（常駐）
+  herdr-ticker ensure-workspace      # notify ワークスペースを用意して終わる
+
+ouest/settings の commands/herdr_ticker.py から fork。主な差分は以下。
+  - 表示先を専用ワークスペース notify に固定し、存在しなければ自作する
+  - 再生中曲の取得をウィンドウタイトル解析から Windows SMTC に変更
+    （NoteBurner はタイトルが固定文字列で曲名を含まないため）
+  - Gmail のポーラを bash から取り込み、資格情報は環境変数から読む
+  - report-metadata の --source をサブコマンドごとに分ける
+"""
+
+import argparse
+import base64
+import fcntl
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
+
+SEPARATOR = "   ♪   "  # スクロールの折り返し部分に挟む区切り
+SIDEBAR_MARGIN = 2  # サイドバー幅のうち行テキストに使えない分（インデント + 右余白）
+FALLBACK_WIDTH = 16  # サイドバー幅を検出できなかったときの保険
+DEFAULT_INTERVAL = 0.3  # スクロールを 1 桁進める間隔（秒）
+DEFAULT_POLL = 2.0  # 再生中曲を取り直す間隔（秒）
+DEFAULT_GMAIL_POLL = 60.0  # Gmail の未読件数を取り直す間隔（秒）
+DEFAULT_SLACK_POLL = 60.0  # Slack のメンションを取り直す間隔（秒）
+DEFAULT_SLACK_SLOTS = 5  # config.toml に用意したチャネル名スロットの数
+SLACK_NAME_TTL = 6 * 3600  # ID→名前キャッシュを作り直す間隔（秒）
+WORKSPACE_RETRY = 5.0  # herdr の応答が無いときに待ち直す間隔（秒）
+
+NOTIFY_LABEL = "notify"  # 表示先の専用ワークスペース名
+LOCK_PATH = os.path.expanduser("~/.cache/herdr-ticker.lock")
+
+SEP_TOKEN = "sep"  # notify ブロックの上に引く区切り線
+SEP_CHAR = "─"
+# 区切り線は常駐サブコマンドの終了時クリーンアップで消えてほしくないので、
+# どのサービスにも属さない専用の source で書く。
+SEP_SOURCE = "ticker-sep"
+
+ARTIST_TOKEN = "artist"
+TITLE_TOKEN = "title"
+GMAIL_TOKEN = "gmail"
+SLACK_LABEL_TOKEN = "slack"
+SLACK_LABEL = "Slack Mentions"
+SLACK_ARCHIVED_LABEL = "Slack  アーカイブ {}"  # 「後で」タブのアーカイブ済み件数
+SLACK_FAIL_LABEL = "Slack (取得失敗)"
+
+GMAIL_FEED = "https://mail.google.com/mail/feed/atom"
+
+# report-metadata の --source。同一 source を複数プロセスで共有すると
+# 互いのトークンを消し合いかねないので、常駐サブコマンドごとに分ける。
+SOURCE = "ticker"
+
+PWSH_FALLBACK = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+
+# Windows の SMTC（システムのメディア再生情報）から再生中の曲を取る。
+# NoteBurner のウィンドウタイトルは常に "NoteBurner YouTube Music Converter" で
+# 曲名を含まないため、ウィンドウタイトル解析は使えない。
+# 出力は Write-Host ではなく Console.Out に書く。Write-Host は情報ストリーム経由で
+# CLIXML にシリアライズされ、-EncodedCommand 実行時に stdout へ素直に出ない。
+PWSH_SMTC = """
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$m = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+  $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
+  $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
+function Await($t, $ty) { $x = $m.MakeGenericMethod($ty).Invoke($null, @($t)); $x.Wait(-1) | Out-Null; $x.Result }
+[Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager,Windows.Media.Control,ContentType=WindowsRuntime] | Out-Null
+$mgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
+$sessions = @($mgr.GetSessions())
+# ブラウザなど複数のアプリが同時に鳴らしている場合は再生中のものを優先する
+$s = $sessions | Where-Object { $_.GetPlaybackInfo().PlaybackStatus -eq 'Playing' } | Select-Object -First 1
+if (-not $s) { $s = $mgr.GetCurrentSession() }
+if ($s) {
+  $p = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
+  [Console]::Out.WriteLine("$($s.GetPlaybackInfo().PlaybackStatus)`t$($p.Artist)`t$($p.Title)")
+}
+"""
+
+
+def char_width(ch):
+    """端末上での表示幅を返す。全角は 2 桁。"""
+    if unicodedata.combining(ch):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in "WF" else 1
+
+
+def text_width(text):
+    return sum(char_width(c) for c in text)
+
+
+def clip(text, width):
+    """先頭から表示幅 width ぶんを切り出し、足りなければ空白で埋める。
+
+    全角が境界に跨る場合はその文字を含めず、代わりに空白を足して幅を揃える。
+    （herdr 側は末尾空白をトリムするが、左端は固定なので見た目は揺れない）
+    """
+    out = []
+    used = 0
+    for ch in text:
+        w = char_width(ch)
+        if used + w > width:
+            break
+        out.append(ch)
+        used += w
+    return "".join(out) + " " * (width - used)
+
+
+def window(text, offset, width):
+    """スクロール位置 offset における表示内容を返す。収まる文字列は動かさない。"""
+    if not text or text_width(text) <= width:
+        return text
+    loop = text + SEPARATOR
+    i = offset % len(loop)
+    # 窓が末尾を跨いでも埋まるよう 1 周ぶん連結してから切り出す
+    return clip(loop[i:] + loop, width)
+
+
+def herdr_bin():
+    """herdr の実行ファイルを探す。
+
+    systemd user サービスや cron から起動されると PATH が最小構成になり
+    mise 配下の herdr が見えないので、shim を直接見に行く。
+    """
+    found = shutil.which("herdr")
+    if found:
+        return found
+    shim = os.path.expanduser("~/.local/share/mise/shims/herdr")
+    return shim if os.path.exists(shim) else "herdr"
+
+
+def run_herdr(args):
+    return subprocess.run(
+        [herdr_bin(), *args], capture_output=True, text=True, check=False
+    )
+
+
+def detect_width():
+    """サイドバーの実効テキスト幅を snapshot から推定する。
+
+    ペイン領域の左端 x がそのままサイドバーの占有幅なので、そこから
+    インデントと右余白ぶんを引く。サイドバーを畳んだり広げたりしても追従する。
+    """
+    proc = run_herdr(["api", "snapshot"])
+    if proc.returncode != 0:
+        return FALLBACK_WIDTH
+    try:
+        layouts = json.loads(proc.stdout)["result"]["snapshot"]["layouts"]
+        sidebar = min(l["area"]["x"] for l in layouts if l.get("area"))
+    except (KeyError, ValueError, json.JSONDecodeError):
+        return FALLBACK_WIDTH
+    return max(1, sidebar - SIDEBAR_MARGIN)
+
+
+def list_workspaces():
+    """ワークスペース一覧を返す。herdr が応答しなければ None。"""
+    proc = run_herdr(["workspace", "list"])
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout)["result"]["workspaces"]
+    except (KeyError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def find_notify(workspaces):
+    for w in workspaces:
+        if w.get("label") == NOTIFY_LABEL:
+            return w["workspace_id"]
+    return None
+
+
+def set_separator(ws):
+    """notify ブロックの上に引く区切り線を入れる。
+
+    幅はこの時点のサイドバー幅に合わせる。畳んだり広げたりしても引き直さない
+    （毎周期引き直すと herdr の起動回数が無駄に増えるため）。
+    """
+    run_herdr([
+        "workspace", "report-metadata", ws, "--source", SEP_SOURCE,
+        "--token", "{}={}".format(SEP_TOKEN, SEP_CHAR * detect_width()),
+    ])
+
+
+def create_notify():
+    """notify ワークスペースを作る。既にあればその ID を返す。
+
+    常駐サブコマンドを 3 つ同時に走らせるので、ロックを取ってから
+    もう一度一覧を引き直し、二重作成を防ぐ。
+    """
+    os.makedirs(os.path.dirname(LOCK_PATH), exist_ok=True)
+    with open(LOCK_PATH, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        workspaces = list_workspaces()
+        if workspaces is None:
+            return None
+        found = find_notify(workspaces)
+        if found:  # ロック待ちの間に他プロセスが作っていた
+            return found
+        proc = run_herdr(
+            ["workspace", "create", "--label", NOTIFY_LABEL, "--no-focus"]
+        )
+        if proc.returncode != 0:
+            return None
+        # create の戻り値の形に依存せず、一覧から引き直して確認する
+        workspaces = list_workspaces()
+        ws = find_notify(workspaces) if workspaces else None
+        if ws:
+            set_separator(ws)
+        return ws
+
+
+def resolve_workspace():
+    """表示先のワークスペース ID を返す。herdr が応答しなければ None。
+
+    上書き用の変数を HERDR_WORKSPACE_ID にしてはいけない。herdr が全ペインに
+    注入しているため、herdr のペインから実行すると必ずそのペインの
+    ワークスペースへ書いてしまう。
+    """
+    override = os.environ.get("HERDR_TICKER_WORKSPACE")
+    if override:
+        return override
+    workspaces = list_workspaces()
+    if workspaces is None:
+        return None
+    return find_notify(workspaces) or create_notify()
+
+
+def wait_for_workspace():
+    """notify ワークスペースが使えるようになるまで待つ。
+
+    サービスは herdr より先に起動しうる。ここで exit すると
+    Restart=always の再起動ループになるので、待って引き直す。
+    """
+    warned = False
+    while True:
+        ws = resolve_workspace()
+        if ws:
+            return ws
+        if not warned:
+            print("herdr が応答しない。起動を待つ", file=sys.stderr, flush=True)
+            warned = True
+        time.sleep(WORKSPACE_RETRY)
+
+
+def set_tokens(ws, values):
+    """複数トークンをまとめて 1 回の呼び出しで設定する。"""
+    args = ["workspace", "report-metadata", ws, "--source", SOURCE]
+    for token, value in values.items():
+        args += ["--token", "{}={}".format(token, value)]
+    run_herdr(args)
+
+
+def clear_tokens(ws, tokens):
+    args = ["workspace", "report-metadata", ws, "--source", SOURCE]
+    for token in tokens:
+        args += ["--clear-token", token]
+    run_herdr(args)
+
+
+def apply_tokens(ws, values):
+    """値が空のトークンはクリアし、それ以外は設定する。まとめて 1 コールで送る。"""
+    args = ["workspace", "report-metadata", ws, "--source", SOURCE]
+    for token, value in values.items():
+        if value:
+            args += ["--token", "{}={}".format(token, value)]
+        else:
+            args += ["--clear-token", token]
+    run_herdr(args)
+
+
+def install_cleanup(state, tokens):
+    """終了時に表示の残骸を残さないようシグナルを捕まえる。
+
+    表示先は notify が閉じられると変わりうるので、固定の ID ではなく
+    state 越しに最新の ID を見る。
+    """
+
+    def on_signal(_signum, _frame):
+        ws = state.get("ws")
+        if ws:
+            clear_tokens(ws, tokens)
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, on_signal)
+    signal.signal(signal.SIGTERM, on_signal)
+
+
+def scroll(ws, token, text, width, interval):
+    if not text:
+        clear_tokens(ws, [token])
+        return
+
+    # 収まるなら動かさない（視界の端で常に動いていると鬱陶しいため）
+    if text_width(text) <= width:
+        set_tokens(ws, {token: text})
+        return
+
+    install_cleanup({"ws": ws}, [token])
+    offset = 0
+    while True:
+        set_tokens(ws, {token: window(text, offset, width)})
+        offset += 1
+        time.sleep(interval)
+
+
+# --- 再生中曲（Windows SMTC） ---------------------------------------------
+
+
+def powershell():
+    return shutil.which("powershell.exe") or PWSH_FALLBACK
+
+
+def fetch_nowplaying():
+    """(アーティスト, タイトル) を返す。再生中でなければ ("", "")。
+
+    一時停止・停止も「鳴っていない」扱いにして行ごと消す。
+    """
+    # PowerShell の引用符と WSL のパス変換を避けるため UTF-16LE + base64 で渡す
+    encoded = base64.b64encode(PWSH_SMTC.encode("utf-16-le")).decode("ascii")
+    proc = subprocess.run(
+        [powershell(), "-NoProfile", "-EncodedCommand", encoded],
+        capture_output=True, text=True, check=False,
+    )
+    line = proc.stdout.replace("\r", "").strip()
+    parts = line.split("\t")
+    if len(parts) != 3 or parts[0] != "Playing":
+        return ("", "")
+    return (parts[1].strip(), parts[2].strip())
+
+
+def nowplaying(width, interval, poll):
+    """再生中の曲を 2 行に流し続ける。"""
+    if not os.path.exists(powershell()):
+        sys.exit("powershell.exe が見つからない（WSL 環境専用）")
+
+    state = {"ws": wait_for_workspace(), "value": ("", "")}
+    install_cleanup(state, [ARTIST_TOKEN, TITLE_TOKEN])
+
+    def poller():
+        # PowerShell の呼び出しは 1 回 0.6〜0.8 秒かかるので、
+        # スクロールが引っかからないよう別スレッドで回す。
+        # ワークスペースの引き直しもここでやる（スクロールの刻みでやると
+        # herdr の起動回数が倍になる）。
+        while True:
+            state["value"] = fetch_nowplaying()
+            ws = resolve_workspace()
+            if ws:
+                state["ws"] = ws
+            time.sleep(poll)
+
+    threading.Thread(target=poller, daemon=True).start()
+
+    shown = None
+    offset = 0
+    while True:
+        artist, title = state["value"]
+        changed = (artist, title) != shown
+        if changed:
+            offset = 0  # 曲が変わったら先頭から流し直す
+            shown = (artist, title)
+        ws = state["ws"]
+        if artist or title:
+            set_tokens(ws, {
+                ARTIST_TOKEN: window(artist, offset, width),
+                TITLE_TOKEN: window(title, offset, width),
+            })
+            offset += 1
+            time.sleep(interval)
+        else:
+            # 鳴っていない間はスクロールする対象が無いので herdr を叩かない。
+            # 消すのは止まった瞬間の 1 回だけで、以後は寝ているだけにする。
+            if changed:
+                clear_tokens(ws, [ARTIST_TOKEN, TITLE_TOKEN])
+            time.sleep(poll)
+
+
+# --- Gmail -----------------------------------------------------------------
+
+
+def fetch_gmail_count(user, password):
+    """未読件数を返す。取得できなければ None。"""
+    req = urllib.request.Request(GMAIL_FEED)
+    token = base64.b64encode(
+        "{}:{}".format(user, password).encode("utf-8")
+    ).decode("ascii")
+    req.add_header("Authorization", "Basic " + token)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as res:
+            body = res.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None
+    match = re.search(r"<fullcount>(\d+)</fullcount>", body)
+    return int(match.group(1)) if match else None
+
+
+def gmail(poll):
+    """未読件数を 1 行で出し続ける。"""
+    user = os.environ.get("GMAIL_USER", "")
+    password = os.environ.get("GMAIL_PASS", "")
+    if not (user and password):
+        sys.exit(
+            "GMAIL_USER / GMAIL_PASS が未設定"
+            "（~/.config/herdr-ticker-gmail.env を確認）"
+        )
+
+    state = {"ws": wait_for_workspace()}
+    install_cleanup(state, [GMAIL_TOKEN])
+
+    last = None
+    while True:
+        ws = resolve_workspace()
+        if ws:
+            state["ws"] = ws
+        count = fetch_gmail_count(user, password)
+        # 取得に失敗したときは前回の表示を保つ（一時的な通信断で消さない）
+        if count is not None and count != last:
+            set_tokens(state["ws"], {GMAIL_TOKEN: "Gmail {}".format(count)})
+            last = count
+        time.sleep(poll)
+
+
+# --- Slack -----------------------------------------------------------------
+
+
+def slack_api(method, params, creds):
+    """Slack API を叩く。認証はブラウザセッション由来の xoxc + d cookie。"""
+    xoxc, cookie = creds
+    req = urllib.request.Request(
+        "https://slack.com/api/" + method,
+        data=urllib.parse.urlencode(params).encode(),
+        headers={
+            "Authorization": "Bearer " + xoxc,
+            "Cookie": "d=" + cookie,
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as res:
+            return json.load(res)
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as err:
+        return {"ok": False, "error": str(err)}
+
+
+class SlackNames:
+    """チャネル ID → 名前のキャッシュ。"""
+
+    def __init__(self, creds):
+        self.creds = creds
+        self.names = {}
+        self.fetched_at = 0.0
+
+    def refresh(self):
+        res = slack_api("users.conversations", {
+            "types": "public_channel,private_channel",
+            "exclude_archived": "true",
+            "limit": "1000",
+        }, self.creds)
+        if res.get("ok"):
+            for channel in res.get("channels") or []:
+                self.names[channel["id"]] = channel.get("name") or channel["id"]
+            self.fetched_at = time.time()
+
+    def get(self, channel_id):
+        if time.time() - self.fetched_at > SLACK_NAME_TTL:
+            self.refresh()
+        if channel_id not in self.names:
+            # 一覧に出てこないチャネル（アーカイブ済み等）は個別に引いて覚える
+            res = slack_api("conversations.info", {"channel": channel_id}, self.creds)
+            channel = res.get("channel") or {}
+            self.names[channel_id] = channel.get("name") or channel_id
+        return self.names[channel_id]
+
+
+def slack_mentions(counts):
+    """client.counts から (チャネル ID, メンション数) を多い順で返す。
+
+    チャネル本体のメンションとスレッド内メンションを合算する。スレッド返信の
+    メンションはチャネル一覧を眺めているだけでは気付きにくいため。
+    """
+    by_thread = (counts.get("threads") or {}).get("mention_count_by_channel") or {}
+    totals = {}
+    for channel in counts.get("channels") or []:
+        total = (channel.get("mention_count") or 0) + (by_thread.get(channel["id"]) or 0)
+        if total > 0:
+            totals[channel["id"]] = total
+    # channels 側に現れないチャネルのスレッドメンションも拾う
+    for channel_id, count in by_thread.items():
+        if count and channel_id not in totals:
+            totals[channel_id] = count
+    return sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def slack_rows(mentions, names, slots):
+    """スロットに収まるよう行を組み立てる。溢れたら最後の行を "+N more" にする。"""
+    if len(mentions) <= slots:
+        return ["#" + names.get(cid) for cid, _ in mentions]
+    shown = ["#" + names.get(cid) for cid, _ in mentions[:slots - 1]]
+    return shown + ["+{} more".format(len(mentions) - (slots - 1))]
+
+
+def slack_archived(counts):
+    """「後で」タブのアーカイブ済み件数。
+
+    メンションと同じ client.counts のレスポンスに最初から入っているので、
+    この行のために API を余分に叩く必要はない。
+    """
+    return (counts.get("saved") or {}).get("archived_count") or 0
+
+
+def slack_label(counts, ok):
+    """ラベル行の文言。アーカイブ済みが残っているときだけ件数に差し替える。"""
+    if not ok:
+        return SLACK_FAIL_LABEL
+    archived = slack_archived(counts)
+    return SLACK_ARCHIVED_LABEL.format(archived) if archived else SLACK_LABEL
+
+
+def slack(slots, poll):
+    """メンションのあるチャネルをラベル行 + 1 チャネル 1 行で出し続ける。
+
+    ラベル行は「後で」タブのアーカイブ済み件数を兼ねる（行を増やさずに済むため）。
+    """
+    creds = (os.environ.get("SLACK_XOXC", ""), os.environ.get("SLACK_COOKIE_D", ""))
+    if not all(creds):
+        sys.exit(
+            "SLACK_XOXC / SLACK_COOKIE_D が未設定"
+            "（~/.config/herdr-ticker-slack.env を確認）"
+        )
+
+    slot_tokens = ["slack{}".format(i) for i in range(1, slots + 1)]
+    state = {"ws": wait_for_workspace()}
+    install_cleanup(state, [SLACK_LABEL_TOKEN, *slot_tokens])
+
+    names = SlackNames(creds)
+    names.refresh()
+
+    while True:
+        ws = resolve_workspace()
+        if ws:
+            state["ws"] = ws
+        counts = slack_api("client.counts", {
+            "thread_counts_by_channel": "true",
+            "org_wide_aware": "true",
+        }, creds)
+        ok = bool(counts.get("ok"))
+        rows = slack_rows(slack_mentions(counts), names, slots) if ok else []
+        values = {SLACK_LABEL_TOKEN: slack_label(counts, ok)}
+        for i, token in enumerate(slot_tokens):
+            values[token] = rows[i] if i < len(rows) else ""
+        apply_tokens(state["ws"], values)
+        time.sleep(poll)
+
+
+# --- エントリポイント -------------------------------------------------------
+
+
+def main():
+    global SOURCE
+
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_set = sub.add_parser("set", help="文字列をそのまま表示する")
+    p_set.add_argument("token", help="config.toml の $名前 に対応するトークン名")
+    p_set.add_argument("text")
+
+    p_clear = sub.add_parser("clear", help="表示を消す")
+    p_clear.add_argument("token", nargs="+")
+
+    p_scroll = sub.add_parser("scroll", help="収まらないときだけ横スクロールする")
+    p_scroll.add_argument("token")
+    p_scroll.add_argument("text")
+    p_scroll.add_argument(
+        "--width", type=int, help="省略時はサイドバー幅から自動判定する"
+    )
+    p_scroll.add_argument("--interval", type=float, default=DEFAULT_INTERVAL)
+
+    p_gmail = sub.add_parser("gmail", help="Gmail の未読件数を出し続ける")
+    p_gmail.add_argument("--poll", type=float, default=DEFAULT_GMAIL_POLL)
+
+    p_slack = sub.add_parser("slack", help="メンションのあるチャネルを出し続ける")
+    p_slack.add_argument("--poll", type=float, default=DEFAULT_SLACK_POLL)
+    p_slack.add_argument(
+        "--slots", type=int, default=DEFAULT_SLACK_SLOTS,
+        help="config.toml に用意したチャネル名スロットの数",
+    )
+
+    p_np = sub.add_parser("nowplaying", help="Windows の再生中曲を流し続ける")
+    p_np.add_argument(
+        "--width", type=int, help="省略時はサイドバー幅から自動判定する"
+    )
+    p_np.add_argument("--interval", type=float, default=DEFAULT_INTERVAL)
+    p_np.add_argument("--poll", type=float, default=DEFAULT_POLL)
+
+    sub.add_parser("width", help="自動判定したサイドバーの実効幅を表示する")
+    sub.add_parser(
+        "ensure-workspace", help="notify ワークスペースを用意して終わる"
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "width":
+        print(detect_width())
+        return
+
+    # 常駐サブコマンドは source を分け、互いのトークンに触れないようにする
+    SOURCE = {
+        "gmail": "ticker-gmail",
+        "slack": "ticker-slack",
+        "nowplaying": "ticker-np",
+    }.get(args.command, "ticker")
+
+    if args.command == "ensure-workspace":
+        # oneshot から呼ばれる。herdr が未起動でも失敗させない
+        # （後続の常駐サブコマンドが各自で作り直すため、ここは前倒しに過ぎない）
+        ws = resolve_workspace()
+        if ws:
+            # 既存の notify にも毎回引き直す。設定を変えた後や
+            # サイドバー幅を変えた後は、ここが線を更新する唯一の機会になる。
+            set_separator(ws)
+            print(ws)
+        else:
+            print("herdr が応答しない。常駐側の起動時に作り直す")
+        return
+
+    if args.command == "gmail":
+        gmail(args.poll)
+        return
+    if args.command == "slack":
+        slack(args.slots, args.poll)
+        return
+    if args.command == "nowplaying":
+        width = args.width if args.width is not None else detect_width()
+        nowplaying(width, args.interval, args.poll)
+        return
+
+    ws = wait_for_workspace()
+    if args.command == "set":
+        set_tokens(ws, {args.token: args.text})
+    elif args.command == "clear":
+        clear_tokens(ws, args.token)
+    elif args.command == "scroll":
+        width = args.width if args.width is not None else detect_width()
+        scroll(ws, args.token, args.text, width, args.interval)
+
+
+if __name__ == "__main__":
+    main()

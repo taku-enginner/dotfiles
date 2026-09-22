@@ -105,3 +105,52 @@ delay_seconds = 0
 
 [experimental]
 allow_nested = true
+
+# サイドバーの各ワークスペースに描く行。ここを書くと herdr の既定行を丸ごと
+# 上書きするので、先頭 2 行(名前・ブランチ)で既定の見た目を再現している。
+# $ で始まるトークンは `herdr workspace report-metadata` が入れた値で埋まる。
+# 値の無いトークンの行は描かれない。書き手は bin/herdr-ticker。
+#
+# 値を入れるのは専用ワークスペース notify だけなので、通知系の 9 行が出るのも
+# notify のブロックだけ。notify は herdr-ticker が無ければ自動で作る。
+# $sep は先頭と末尾の 2 箇所に置いて notify のブロックを線で挟む(値は同じ)。
+[ui.sidebar.spaces]
+rows = [
+  [{ token = "$sep", fg = "#5c6370" }],     # notify の直上に引く区切り線
+  ["state_icon", "workspace"],
+  ["branch", "git_status"],
+  [{ token = "$artist", fg = "#00B16B" }],  # 再生中のアーティスト
+  [{ token = "$title",  fg = "#84C98B" }],  # 再生中の曲名
+  [{ token = "$gmail",  fg = "#ff8c00" }],  # Gmail 未読件数
+  [{ token = "$slack",  fg = "#E01E5A" }],  # Slack のラベル行(アーカイブ済み件数を兼ねる)
+  [{ token = "$slack1", fg = "#E8A0B4" }],  # 以下メンションのあるチャネル
+  [{ token = "$slack2", fg = "#E8A0B4" }],
+  [{ token = "$slack3", fg = "#E8A0B4" }],
+  [{ token = "$slack4", fg = "#E8A0B4" }],
+  [{ token = "$slack5", fg = "#E8A0B4" }],
+  [{ token = "$sep", fg = "#5c6370" }],     # notify の直下に引く区切り線
+]
+
+# エージェントパネルの各行。既定は ["state_icon", "workspace", "tab"] / ["agent"] で
+# space 名が出るが、同じ space に複数セッションがあると見分けが付かないので
+# セッション名(Claude が端末タイトルに出している要約)に差し替える。
+#   pane                    … herdr-mirror が pane.report_metadata --title で送ってくる
+#                             リモート側のセッション名。ローカルのペインでは
+#                             リネームしない限り空なので何も描かれない。
+#   terminal_title_stripped … ローカルの Claude のセッション名。
+# state_icon は既定のまま残すので、進行中(⠹)・応答待ち(◉)の表示は今までどおり。
+# セッション名は既定だと dim + #6C7086 で背景(#1E1E2E)に埋もれるため、
+# spaces パネルのワークスペース名と同じ bold + #CDD6F4 に上げる。
+# 2 行目の space 名はセッション名の従属情報なので、1 段落とした #A6ADC8 で描く
+# (既定の dim + #6C7086 は暗すぎる)。
+[ui.sidebar.agents]
+# エージェント 1 件が 2 行になったぶん、既定の row_gap = 0 だと隣の行と続いて見える。
+row_gap = 1
+rows = [
+  [
+    "state_icon",
+    { token = "pane",                    fg = "#CDD6F4", bold = true, dim = false },
+    { token = "terminal_title_stripped", fg = "#CDD6F4", bold = true, dim = false },
+  ],
+  [{ token = "workspace", fg = "#A6ADC8", bold = false, dim = false }],
+]
