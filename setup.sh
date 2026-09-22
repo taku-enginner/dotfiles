@@ -168,6 +168,7 @@ generate_claude_md() {
 generate_settings() {
   local base="$CLAUDE_BASE_DIR/settings.json"
   local override="$CLAUDE_PERSONAL_DIR/settings.override.json"
+  local override_wsl="$CLAUDE_PERSONAL_DIR/settings.override.wsl.json"
   local out="$CLAUDE_OUT_DIR/settings.json"
   if ! command -v jq >/dev/null 2>&1; then
     echo "jq が無いため $out を生成できません(jq 導入後に再実行)" >&2
@@ -178,6 +179,12 @@ generate_settings() {
   local inputs=()
   [ -f "$base" ] && inputs+=("$base")
   [ -f "$override" ] && inputs+=("$override")
+  # WSL 断片。herdr-agent-state.sh の hook は /home/tak 直下を指すため、
+  # 共通の override に置くと Mac・debian でも登録され毎セッション失敗する。
+  # WSL でだけ合成する(uname -s は Linux としか出ないので /proc/version を見る)。
+  if grep -qi microsoft /proc/version 2>/dev/null; then
+    [ -f "$override_wsl" ] && inputs+=("$override_wsl")
+  fi
   if [ ${#inputs[@]} -eq 0 ]; then
     echo "settings のソースが無い: $base / $override" >&2
     return 1
@@ -289,6 +296,21 @@ setup_mcp_servers() {
       echo
     fi
     claude mcp add --transport http -s user context7 https://mcp.context7.com/mcp --header "CONTEXT7_API_KEY: ${api_key}"
+  fi
+  # typesafe-mcp: Jev(TypeSafe の System One Model)へ型付きの判定を投げる MCP。
+  # ツールは evaluate 1つで、noul(確率) / choice(選択) / score(採点) の3種。読み取り専用。
+  # 本体は Go 製。バイナリの入手はここでは自動化しない(配布元のスクリプトを無確認で
+  # 走らせないため)。入手だけ手で済ませ、Claude Code への登録をここが持つ。
+  # キーは vault/.env.shared から .zshrc が export する。
+  if ! command -v evaluate >/dev/null 2>&1; then
+    echo "typesafe-mcp は未導入。https://github.com/itsmostafa/typesafe-mcp の install.sh を"
+    echo "中身を読んだうえで実行するか、go install で入れてから再実行すること"
+  elif claude mcp get evaluate >/dev/null 2>&1; then
+    echo "MCP 'evaluate'(typesafe-mcp) は導入済み"
+  elif [ -z "${TYPESAFE_API_KEY:-}" ]; then
+    echo "TYPESAFE_API_KEY が未設定。~/vault/.env.shared に書いてシェルを開き直すこと" >&2
+  elif confirm_exe "typesafe-mcp を Claude Code に登録しますか?"; then
+    evaluate setup mcp
   fi
 }
 
