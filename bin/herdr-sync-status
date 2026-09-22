@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# vault の同期状態を herdr のサイドバーに出す。
+#
+#   herdr-sync-status          1回だけ測って書く
+#   herdr-sync-status --watch  間隔をあけて繰り返す（既定 300 秒）
+#
+# 表示は config.toml の [ui.sidebar.spaces] の $sync 行に出る。
+# 値が空だとその行は描かれないので、正常時も「同期 ○」を出して
+# 「書かれていない＝仕組みが止まっている」と区別できるようにする。
+set -uo pipefail
+
+# launchd / cron から呼ばれると PATH が最小構成になり、sort や date すら
+# 見つからないことがある。herdr 本体は herdr-ticker 側が mise の shim を
+# 直接見に行くので、ここでは一般的なコマンドの置き場だけ足せばよい。
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:${PATH:-}"
+
+CHECK="${VSS_CHECK:-$HOME/vault/takuma/scripts/vault-sync-check.sh}"
+TICKER="${VSS_TICKER:-$HOME/dotfiles/bin/herdr-ticker}"
+INTERVAL="${VSS_INTERVAL:-300}"
+
+report() {
+  local out rc line
+  out=$(bash "$CHECK" 2>&1); rc=$?
+
+  case "$rc" in
+    0) line="同期 ○ $(date '+%H:%M')" ;;
+    1) # ずれている。何台落ちているかを出す
+       local n
+       n=$(printf '%s\n' "$out" | grep -cE '^\S+\s+×')
+       line="同期 × ${n}台 $(date '+%H:%M')" ;;
+    2) line="同期 ? 確認できない $(date '+%H:%M')" ;;
+    *) line="同期 ? rc=$rc $(date '+%H:%M')" ;;
+  esac
+
+  "$TICKER" set sync "$line"
+  echo "$line"
+  return "$rc"
+}
+
+if [ "${1:-}" = "--watch" ]; then
+  while :; do report; sleep "$INTERVAL"; done
+else
+  report
+fi

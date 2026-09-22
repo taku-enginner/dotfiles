@@ -157,9 +157,11 @@ rows = [
   [{ token = "$slack",  fg = "#E01E5A" }],  # Slack のラベル行(アーカイブ済み件数を兼ねる)
   [{ token = "$slack1", fg = "#E8A0B4" }],  # 以下メンションのあるチャネル
   [{ token = "$slack2", fg = "#E8A0B4" }],
-  [{ token = "$slack3", fg = "#E8A0B4" }],
-  [{ token = "$slack4", fg = "#E8A0B4" }],
-  [{ token = "$slack5", fg = "#E8A0B4" }],
+  [{ token = "$sync",   fg = "#7AA2F7" }],  # vault の同期状態（herdr-sync-status が書く）
+  [{ token = "$ideas",  fg = "#E0AF68" }],  # ideas の未消化件数（herdr-ideas-status が書く）
+  [{ token = "$idea1",  fg = "#9ECE6A" }],  # 高の3件（id 昇順）。空き枠は ― が入る
+  [{ token = "$idea2",  fg = "#9ECE6A" }],
+  [{ token = "$idea3",  fg = "#9ECE6A" }],
   [{ token = "$sep", fg = "#5c6370" }],     # notify の直下に引く区切り線
 ]
 
@@ -175,14 +177,17 @@ rows = [
 # spaces パネルのワークスペース名と同じ bold + #CDD6F4 に上げる。
 # 2 行目の space 名はセッション名の従属情報なので、1 段落とした #A6ADC8 で描く
 # (既定の dim + #6C7086 は暗すぎる)。
-[ui.sidebar.agents]
-# エージェント 1 件が 2 行になったぶん、既定の row_gap = 0 だと隣の行と続いて見える。
-row_gap = 1
-rows = [
-  [
-    "state_icon",
-    { token = "pane",                    fg = "#CDD6F4", bold = true, dim = false },
-    { token = "terminal_title_stripped", fg = "#CDD6F4", bold = true, dim = false },
-  ],
-  [{ token = "workspace", fg = "#A6ADC8", bold = false, dim = false }],
-]
+# ⚠️ 2026-09-23: ここから下は WSL 側の設定。120 行目の [ui.sidebar.agents] と
+# 重複して config が読めなくなったのでコメントアウトした。pane トークンは
+# herdr-mirror のリモートセッション名で、Mac では常に空。
+# [ui.sidebar.agents]
+# # エージェント 1 件が 2 行になったぶん、既定の row_gap = 0 だと隣の行と続いて見える。
+# row_gap = 1
+# rows = [
+#   [
+#     "state_icon",
+#     { token = "pane",                    fg = "#CDD6F4", bold = true, dim = false },
+#     { token = "terminal_title_stripped", fg = "#CDD6F4", bold = true, dim = false },
+#   ],
+#   [{ token = "workspace", fg = "#A6ADC8", bold = false, dim = false }],
+# ]
