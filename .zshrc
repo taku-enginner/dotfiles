@@ -138,4 +138,34 @@ cd $HOME/work
 # secrets / AWS profile / bastion 等は private リポが持つ(存在すれば source)
 [ -f "$HOME/dotfiles-private/zshrc.private" ] && source "$HOME/dotfiles-private/zshrc.private"
 
+# 3台共有の API キー。vault の .env.shared だけを追跡対象にしてある(vault/.gitignore)。
+# .env 本体は source しない — Mattermost のトークンまで全プロセスの環境変数に出るため、
+# 必要なキーだけを個別に拾う。grep 1回なので起動時間にはほぼ効かない。
+if [ -f "$HOME/vault/.env.shared" ]; then
+  export TYPESAFE_API_KEY="${$(grep -m1 '^TYPESAFE_API_KEY=' "$HOME/vault/.env.shared")#*=}"
+  # はてなブックマーク API(OAuth 1.0a)。読了した記事の「あとで読む」タグを外すのに使う。
+  # consumer は開発者ページで発行、access は oauth_setup_hatena.py の初回実行で取る。
+  # 4つとも揃わないと API を叩けないが、無くてもシェルは起動する(空で export される)。
+  export HATENA_CONSUMER_KEY="${$(grep -m1 '^HATENA_CONSUMER_KEY=' "$HOME/vault/.env.shared")#*=}"
+  export HATENA_CONSUMER_SECRET="${$(grep -m1 '^HATENA_CONSUMER_SECRET=' "$HOME/vault/.env.shared")#*=}"
+  export HATENA_ACCESS_TOKEN="${$(grep -m1 '^HATENA_ACCESS_TOKEN=' "$HOME/vault/.env.shared")#*=}"
+  export HATENA_ACCESS_SECRET="${$(grep -m1 '^HATENA_ACCESS_SECRET=' "$HOME/vault/.env.shared")#*=}"
+  # fast-jev-compaction(Claude Code プラグイン)が要求する function hooks の有効化。
+  # 秘密ではないが、settings.json は setup.sh が再生成するうえ dotfiles/claude/ は
+  # 公開リポジトリなので、キーと同じくここで環境変数として渡す。
+  export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1
+  # jev-router の Long tier(Fable)。既定で無効なので、立てないと jev-claude 起動時に
+  # Fable が一度も選ばれず、global_rules の「計画も実装も Fable 5」が黙って外れる。
+  export JEV_ALLOW_FABLE=1
+fi
+
+# zsh のコマンド補完を Jev に出す(fish 風のグレー表示)。キーワード一致ではなく
+# 履歴100件から「何を打とうとしているか」を判定させる。
+# ⚠️ 1キーストロークにつき API 1リクエスト。従量課金なので、常用する前に使用量を見ること。
+# [[ -f ]] で囲うのは必須 — .zshrc は3台共有なので、clone していないマシンでは
+# 黙って飛ばさないと毎回シェル起動時にエラーが出る(herdr-agent-state.sh と同じ穴)。
+if [ -f "$HOME/.zsh/jev-shell-history/zsh/jev-shell-history.plugin.zsh" ]; then
+  source "$HOME/.zsh/jev-shell-history/zsh/jev-shell-history.plugin.zsh"
+fi
+
 if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
