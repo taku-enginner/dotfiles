@@ -134,6 +134,20 @@ def clip(text, width):
     return "".join(out) + " " * (width - used)
 
 
+def truncate(text, width):
+    """幅に収めて返す。溢れたら末尾を `…` にする（スクロールしない表示用）。
+
+    ⚠️ 2026-09-24: 一度これを捨てて「溢れたぶんは herdr が切る」に寄せたが、
+    herdr にサイドバー幅の固定値は無く、sidebar_min_width(18)〜sidebar_max_width(36)
+    の範囲で内容に合わせて自動スケールする。フル幅のタイトルを渡すと常に max に
+    張り付き、幅が縮まなくなる。上限を下げると今度は可変域が潰れる。
+    幅を可変に保つには、こちら側で切るしかない。
+    """
+    if not text or text_width(text) <= width:
+        return text
+    return clip(text, width - 1).rstrip() + "…"
+
+
 def window(text, offset, width, sep=SEPARATOR):
     """スクロール位置 offset における表示内容を返す。収まる文字列は動かさない。"""
     if not text or text_width(text) <= width:
@@ -622,16 +636,19 @@ def ideas_rows(opens, highs, slots):
     return rows
 
 
-def ideas(slots, width, interval, poll, once=False):
+def ideas(slots, width, interval, poll, once=False, no_scroll=False):
     """未消化件数と「高」のタイトルを流し続ける。
 
-    タイトルは省略せず横スクロールさせる（`window` が幅に収まるものは動かさない）。
+    既定は横スクロール（`window` が幅に収まるものは動かさない）。
+    `no_scroll` を立てると流さず、溢れたタイトルは末尾を `…` にして切り詰める。
     """
     path = os.path.expanduser(os.environ.get("HERDR_IDEAS_DIR", IDEAS_DIR))
     tokens = [IDEAS_TOKEN] + ["idea{}".format(i + 1) for i in range(slots)]
 
     if once:
         rows = ideas_rows(*read_ideas(path), slots=slots)
+        if no_scroll:
+            rows = [truncate(r, width) for r in rows]
         set_tokens(wait_for_workspace(), dict(zip(tokens, rows)))
         print("\n".join(rows))
         return
@@ -651,6 +668,19 @@ def ideas(slots, width, interval, poll, once=False):
                 state["ws"] = ws
 
     threading.Thread(target=poller, daemon=True).start()
+
+    if no_scroll:
+        # 流さない。中身が変わったときだけ書き直せばよいので、刻みは poll に任せる。
+        shown = None
+        while True:
+            rows = state["rows"]
+            if rows != shown:
+                set_tokens(state["ws"], {
+                    t: truncate(r, width) for t, r in zip(tokens, rows)
+                })
+                shown = rows
+            time.sleep(min(interval, poll))
+        return
 
     shown, offset = None, 0
     while True:
@@ -710,6 +740,8 @@ def main():
         "--width", type=int, help="省略時はサイドバー幅から自動判定する"
     )
     p_ideas.add_argument("--interval", type=float, default=DEFAULT_INTERVAL)
+    p_ideas.add_argument("--no-scroll", action="store_true",
+                         help="流さずに切り詰める（溢れたら末尾を … にする）")
     p_ideas.add_argument(
         "--once", action="store_true", help="1 回だけ書いて終わる（スクロールしない）"
     )
@@ -761,7 +793,7 @@ def main():
         return
     if args.command == "ideas":
         width = args.width if args.width is not None else detect_width()
-        ideas(args.slots, width, args.interval, args.poll, args.once)
+        ideas(args.slots, width, args.interval, args.poll, args.once, args.no_scroll)
         return
     if args.command == "nowplaying":
         width = args.width if args.width is not None else detect_width()

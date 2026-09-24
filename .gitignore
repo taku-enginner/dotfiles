@@ -18,3 +18,6 @@ herdr/plugins/
 # herdr-lazy が config.toml へ初回書き込みする際に作るバックアップ。
 # キーバインドはこちらで手書きするので通常は生成されないが、作られても追跡しない。
 herdr/config.toml.herdr-lazy-backup
+# Python のバイトコード（bin/ のスクリプトを import したときに出る）
+__pycache__/
+*.pyc
